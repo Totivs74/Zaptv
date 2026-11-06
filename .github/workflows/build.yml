@@ -26,7 +26,9 @@ jobs:
         run: gradle assembleRelease --no-daemon --stacktrace
 
       - name: Rename APK
-        run: cp app/build/outputs/apk/release/app-release.apk ZapTV.apk
+        run: |
+          cp app/build/outputs/apk/release/app-release.apk ZapTV.apk
+          cp ZapTV.apk tv.apk
 
       - uses: actions/upload-artifact@v4
         with:
@@ -38,5 +40,7 @@ jobs:
         with:
           tag_name: build-${{ github.run_number }}
           name: ZapTV build ${{ github.run_number }}
-          files: ZapTV.apk
+          files: |
+            ZapTV.apk
+            tv.apk
           make_latest: true
