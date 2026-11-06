@@ -21,6 +21,7 @@ class Repo(private val app: App) {
     private var playlistEpg = ""
 
     companion object {
+        const val RECENT = "Recent"
         const val FAV = "Favourites"
         const val ALL = "All"
     }
@@ -36,11 +37,15 @@ class Repo(private val app: App) {
 
     fun allGroups(): List<String> = channels.map { it.group }.distinct()
 
-    fun tabs(): List<String> = listOf(FAV) + groups() + listOf(ALL)
+    fun tabs(): List<String> = listOf(RECENT, FAV) + groups() + listOf(ALL)
 
     fun channelsFor(group: String): List<Channel> {
         val hidden = prefs.hiddenGroups
         return when (group) {
+            RECENT -> {
+                val byKey = channels.associateBy { it.key }
+                prefs.recent.mapNotNull { byKey[it] }
+            }
             FAV -> { val f = prefs.favourites; channels.filter { it.key in f } }
             ALL -> channels.filter { it.group !in hidden }
             else -> channels.filter { it.group == group }

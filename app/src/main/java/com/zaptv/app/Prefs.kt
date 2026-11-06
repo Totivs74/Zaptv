@@ -81,6 +81,15 @@ class Prefs(ctx: Context) {
         get() = p.getStringSet("favs", emptySet())?.toSet() ?: emptySet()
         set(v) = p.edit().putStringSet("favs", v).apply()
 
+    /** Last watched channels, newest first (max 10). */
+    var recent: List<String>
+        get() = (p.getString("recent", "") ?: "").split('\n').filter { it.isNotEmpty() }
+        set(v) = p.edit().putString("recent", v.take(10).joinToString("\n")).apply()
+
+    fun addRecent(key: String) {
+        recent = listOf(key) + recent.filter { it != key }
+    }
+
     var hiddenGroups: Set<String>
         get() = p.getStringSet("hidden", emptySet())?.toSet() ?: emptySet()
         set(v) = p.edit().putStringSet("hidden", v).apply()

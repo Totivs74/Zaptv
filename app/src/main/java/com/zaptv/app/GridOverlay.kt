@@ -138,13 +138,13 @@ class GridOverlay(private val act: MainActivity) : FrameLayout(act) {
         isFocusable = true
     }
 
+    /** Only buttons the Thomson remote really has: no colour keys, no numbers. */
     fun refreshHints() {
         val parts = ArrayList<String>()
         parts.add("OK: open")
-        val fav = prefs.keyFor(Action.FAVOURITE)
-        if (fav != KeyMap.NONE) parts.add(KeyMap.name(fav) + ": favourite")
         val v = prefs.keyFor(Action.VOICE)
-        if (prefs.voiceEnabled && v != KeyMap.NONE) parts.add(KeyMap.name(v) + ": voice")
+        if (prefs.voiceEnabled && v == KeyMap.LONG_OK) parts.add("Hold OK: voice")
+        parts.add("Back: close")
         epgHint.text = parts.joinToString("    ")
     }
 
@@ -192,7 +192,11 @@ class GridOverlay(private val act: MainActivity) : FrameLayout(act) {
             if (tab.isActivated) grid.nextFocusUpId = tab.id
         }
         if (!grid.hasFocus()) {
-            epgName.text = if (items.isEmpty() && name == Repo.FAV) "No favourites yet" else "${items.size} channels"
+            epgName.text = when {
+                items.isEmpty() && name == Repo.FAV -> "No favourites yet. Add them from the ▶ menu while watching."
+                items.isEmpty() && name == Repo.RECENT -> "Nothing watched yet"
+                else -> "${items.size} channels"
+            }
             nowRow.visibility = View.GONE; nextRow.visibility = View.GONE; bar.visibility = View.GONE
         }
     }
@@ -200,6 +204,11 @@ class GridOverlay(private val act: MainActivity) : FrameLayout(act) {
     fun open(current: Channel?) {
         visibility = View.VISIBLE
         applySettings()
+        // Recent and Favourites change while watching: refresh them each time the grid opens.
+        if (group == Repo.RECENT || group == Repo.FAV) {
+            items = repo.channelsFor(group)
+            adapter.notifyDataSetChanged()
+        }
         removeCallbacks(clockTick); post(clockTick)
         if (current != null && items.none { it.key == current.key }) {
             if (group != Repo.ALL && tabNames.contains(current.group)) setGroup(current.group)

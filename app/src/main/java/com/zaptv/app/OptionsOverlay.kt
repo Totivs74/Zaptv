@@ -12,6 +12,7 @@ class OptionsOverlay(private val act: MainActivity) : FrameLayout(act) {
     private val audioVal = act.label("", 15f)
     private val subsVal = act.label("", 15f)
     private val picVal = act.label("", 15f)
+    private val favVal = act.label("", 15f)
     private val firstRow: View
 
     init {
@@ -21,6 +22,7 @@ class OptionsOverlay(private val act: MainActivity) : FrameLayout(act) {
         firstRow = row("Audio", audioVal) { cycleAudio() }
         row("Subtitles", subsVal) { cycleSubs() }
         row("Picture", picVal) { cyclePicture() }
+        row("Favourite", favVal) { act.doAction(Action.FAVOURITE) }
         panel.addView(act.label("OK: change     Back: close", 12f, Col.MUTED), lp(WRAP, WRAP).apply { topMargin = dp(10) })
         addView(panel, LayoutParams(dp(380), WRAP, Gravity.END or Gravity.CENTER_VERTICAL).apply { rightMargin = dp(28) })
         visibility = View.GONE
@@ -66,6 +68,7 @@ class OptionsOverlay(private val act: MainActivity) : FrameLayout(act) {
             else -> sel.label
         }
         picVal.text = listOf("Fit", "Fill", "Zoom")[act.app.prefs.resizeMode.coerceIn(0, 2)]
+        favVal.text = act.currentChannel()?.let { if (act.app.repo.isFav(it)) "Yes ★" else "No" } ?: "-"
     }
 
     private fun cycleAudio() {

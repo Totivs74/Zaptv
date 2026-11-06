@@ -200,6 +200,7 @@ class MainActivity : Activity(), PlayerController.Listener {
         if (cur != null && cur.key != ch.key) prefs.prevChannelKey = cur.key
         current = ch
         prefs.lastChannelKey = ch.key
+        prefs.addRecent(ch.key)
         started = true
         if (ch.cmd.isNotEmpty()) {
             prefs.lastUrl = ""
@@ -221,10 +222,14 @@ class MainActivity : Activity(), PlayerController.Listener {
 
     private fun zapList(): List<Channel> {
         val c = current
+        // Zapping inside "Recent" would reshuffle as you go, so use the channel's own group there.
+        if (c != null && grid.group == Repo.RECENT) return repo.channelsFor(c.group).ifEmpty { repo.channelsFor(Repo.ALL) }
         val g = grid.items
         if (c != null && g.any { it.key == c.key }) return g
         return repo.channelsFor(Repo.ALL)
     }
+
+    fun currentChannel(): Channel? = current
 
     /** Up/Down zapping: the banner follows instantly, the stream starts when you stop pressing. */
     private fun zap(step: Int) {
@@ -256,7 +261,7 @@ class MainActivity : Activity(), PlayerController.Listener {
 
     fun playFromGrid(ch: Channel) {
         grid.close(); mode = Mode.PLAYER
-        if (current?.key == ch.key && player.isActive) { if (prefs.bannerSec > 0) banner.show(ch); return }
+        // OK on the channel already playing reloads it (handy if the picture looks stuck).
         playChannel(ch)
     }
 
@@ -485,10 +490,24 @@ class MainActivity : Activity(), PlayerController.Listener {
         else if (statusView.text == "Loading…") clearStatus()
     }
 
+    private val playerMessages = setOf(
+        "Loading…", PlayerController.MSG_RECONNECT, PlayerController.MSG_SLOW, PlayerController.MSG_DEAD
+    )
+
     override fun onProblem(message: String?) {
         if (message == null) {
-            if (statusView.text == "Reconnecting…" || statusView.text == "Loading…") clearStatus()
-        } else status(message, sticky = message == "Reconnecting…")
+            if (statusView.text.toString() in playerMessages) clearStatus()
+        } else status(message, sticky = true)
+    }
+
+    override fun onNeedFreshUrl(): Boolean {
+        val ch = current ?: return false
+        if (ch.cmd.isEmpty()) return false
+        links.execute {
+            val u = runCatching { repo.resolve(ch) }.getOrNull()
+            app.main.post { if (current === ch && !u.isNullOrEmpty()) player.play(u) }
+        }
+        return true
     }
 
     // ---------------------------------------------------------------- voice plumbing

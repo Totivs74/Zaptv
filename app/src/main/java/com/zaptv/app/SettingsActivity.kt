@@ -106,7 +106,10 @@ class SettingsActivity : Activity() {
         )
         1 -> listOf(
             Row("Hide groups", { "${prefs.hiddenGroups.size} hidden" }, "Hidden groups don't appear in the grid or when zapping") { hideGroupsDialog() },
-            Row("Favourites", { "${prefs.favourites.size} channels" }, "Add with the ${KeyMap.name(prefs.keyFor(Action.FAVOURITE))} key in the grid. OK here clears them all.") { clearFavourites() }
+            Row("Favourites", { "${prefs.favourites.size} channels" }, "Add while watching: press ▶, then Favourite. OK here clears them all.") { clearFavourites() },
+            Row("Recently watched", { "${prefs.recent.size} channels" }, "Shown as the first tab in the channel list. OK here clears it.") {
+                prefs.recent = emptyList(); app.gridDirty = true
+            }
         )
         2 -> listOf(
             Row("Auto-start when TV turns on", { onOff(prefs.autoBoot) }, "Needs the \"Display over other apps\" permission below", toggle = true) {

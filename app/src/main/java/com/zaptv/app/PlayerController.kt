@@ -32,6 +32,8 @@ class PlayerController(
     interface Listener {
         fun onBuffering(buffering: Boolean)
         fun onProblem(message: String?)
+        /** Return true if the activity will fetch a fresh link and call play() itself (MAC portals). */
+        fun onNeedFreshUrl(): Boolean = false
     }
 
     class TrackRef(val group: Tracks.Group, val index: Int, val label: String, val selected: Boolean)
@@ -39,6 +41,13 @@ class PlayerController(
     companion object {
         const val AUDIO = C.TRACK_TYPE_AUDIO
         const val TEXT = C.TRACK_TYPE_TEXT
+        const val MSG_RECONNECT = "Reconnecting…"
+        const val MSG_SLOW = "Channel not responding, trying again…"
+        const val MSG_DEAD = "This channel isn't working right now"
+        private const val START_TIMEOUT_MS = 6000L
+        private const val FREEZE_MS = 6000L
+        private const val STUCK_BUFFER_MS = 10000L
+        private const val MAX_START_ATTEMPTS = 4
     }
 
     var listener: Listener? = null
@@ -47,6 +56,25 @@ class PlayerController(
     private val handler = Handler(Looper.getMainLooper())
     private var retries = 0
     private val retry = Runnable { reconnect() }
+
+    // Freeze / dead-channel detection
+    private var everReady = false
+    private var gaveUp = false
+    private var lastPos = -1L
+    private var lastMove = 0L
+    private var bufferingSince = 0L
+    private val startCheck = Runnable {
+        if (!everReady && !gaveUp) {
+            listener?.onProblem(MSG_SLOW)
+            reconnect()
+        }
+    }
+    private val watchdog = object : Runnable {
+        override fun run() {
+            checkFrozen()
+            handler.postDelayed(this, 2000)
+        }
+    }
 
     val isActive: Boolean get() = player != null
 
@@ -85,8 +113,14 @@ class PlayerController(
         p.addListener(object : Player.Listener {
             override fun onPlaybackStateChanged(state: Int) {
                 listener?.onBuffering(state == Player.STATE_BUFFERING)
+                val now = System.currentTimeMillis()
+                bufferingSince = if (state == Player.STATE_BUFFERING) (if (bufferingSince == 0L) now else bufferingSince) else 0L
                 if (state == Player.STATE_READY) {
                     retries = 0
+                    everReady = true
+                    gaveUp = false
+                    lastMove = now
+                    handler.removeCallbacks(startCheck)
                     listener?.onProblem(null)
                 } else if (state == Player.STATE_ENDED) {
                     scheduleRetry()
@@ -100,7 +134,7 @@ class PlayerController(
                     return
                 }
                 if (prefs.autoReconnect) scheduleRetry()
-                else listener?.onProblem("Can't play this channel")
+                else listener?.onProblem(MSG_DEAD)
             }
 
             override fun onVideoSizeChanged(videoSize: VideoSize) {
@@ -120,7 +154,13 @@ class PlayerController(
 
     fun play(u: String) {
         handler.removeCallbacks(retry)
+        handler.removeCallbacks(startCheck)
         retries = 0
+        everReady = false
+        gaveUp = false
+        lastPos = -1L
+        lastMove = System.currentTimeMillis()
+        bufferingSince = 0L
         url = u
         subs.text = ""
         val p = ensure()
@@ -130,21 +170,61 @@ class PlayerController(
         p.setMediaItem(item.build())
         p.prepare()
         p.play()
+        handler.postDelayed(startCheck, START_TIMEOUT_MS)
+        handler.removeCallbacks(watchdog)
+        handler.postDelayed(watchdog, 2000)
     }
 
     private fun scheduleRetry() {
-        if (url == null) return
+        if (url == null || gaveUp) return
+        if (!everReady && retries >= MAX_START_ATTEMPTS) {
+            giveUp()
+            return
+        }
         val delay = when (retries) { 0 -> 800L; 1 -> 1500L; 2 -> 3000L; else -> 5000L }
         retries++
-        listener?.onProblem("Reconnecting…")
+        listener?.onProblem(if (everReady) MSG_RECONNECT else MSG_SLOW)
         handler.removeCallbacks(retry)
         handler.postDelayed(retry, delay)
+    }
+
+    private fun giveUp() {
+        gaveUp = true
+        handler.removeCallbacks(retry)
+        handler.removeCallbacks(startCheck)
+        player?.stop()
+        listener?.onProblem(MSG_DEAD)
+    }
+
+    /** Picture not moving for 6 s, or stuck loading for 10 s: reload at the live point. */
+    private fun checkFrozen() {
+        val p = player ?: return
+        if (gaveUp || url == null || !everReady || !p.playWhenReady) return
+        val now = System.currentTimeMillis()
+        if (p.playbackState == Player.STATE_READY) {
+            val pos = p.currentPosition
+            if (pos != lastPos) { lastPos = pos; lastMove = now; return }
+            if (now - lastMove >= FREEZE_MS) {
+                lastMove = now
+                listener?.onProblem(MSG_RECONNECT)
+                reconnect()
+            }
+        } else if (p.playbackState == Player.STATE_BUFFERING && bufferingSince > 0 && now - bufferingSince >= STUCK_BUFFER_MS) {
+            bufferingSince = now
+            listener?.onProblem(MSG_RECONNECT)
+            reconnect()
+        }
     }
 
     private fun reconnect() {
         val p = player ?: return
         val u = url ?: return
-        if (p.currentMediaItem == null) p.setMediaItem(MediaItem.fromUri(u))
+        // MAC portal links expire: let the activity fetch a fresh one after the first failed attempt.
+        if (retries >= 2 && listener?.onNeedFreshUrl() == true) return
+        lastPos = -1L
+        lastMove = System.currentTimeMillis()
+        p.stop()
+        p.setMediaItem(p.currentMediaItem ?: MediaItem.fromUri(u))
         p.seekToDefaultPosition()
         p.prepare()
         p.play()
@@ -159,11 +239,15 @@ class PlayerController(
 
     fun stop() {
         handler.removeCallbacks(retry)
+        handler.removeCallbacks(startCheck)
+        handler.removeCallbacks(watchdog)
         player?.stop()
     }
 
     fun release() {
         handler.removeCallbacks(retry)
+        handler.removeCallbacks(startCheck)
+        handler.removeCallbacks(watchdog)
         player?.release()
         player = null
     }
