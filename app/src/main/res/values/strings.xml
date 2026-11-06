@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">ZapTV</string>
+    <string name="a11y_desc">Lets one remote button you choose open ZapTV from anywhere. Only the key you pick is used; all other keys are passed through untouched.</string>
+</resources>
