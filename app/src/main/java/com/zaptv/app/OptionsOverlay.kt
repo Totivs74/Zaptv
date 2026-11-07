@@ -16,7 +16,7 @@ class OptionsOverlay(private val act: MainActivity) : FrameLayout(act) {
     private val firstRow: View
 
     init {
-        panel.background = rounded(Col.CARD, dp(18).toFloat(), dp(1), Col.LINE)
+        panel.background = rounded(Col.CARD, dp(22).toFloat(), dp(1), Col.LINE)
         panel.setPadding(dp(18), dp(18), dp(18), dp(18))
         panel.addView(act.label("Options", 20f, Col.TEXT, true), lp(MATCH, WRAP).apply { bottomMargin = dp(12) })
         firstRow = row("Audio", audioVal) { cycleAudio() }
@@ -36,10 +36,8 @@ class OptionsOverlay(private val act: MainActivity) : FrameLayout(act) {
         val t = act.label(title, 15f, Col.TEXT, true)
         r.addView(t, lp(0, WRAP, 1f))
         r.addView(value, lp(WRAP, WRAP))
-        r.setOnFocusChangeListener { _, has ->
-            val c = if (has) Col.DARK else Col.TEXT
-            t.setTextColor(c); value.setTextColor(c)
-        }
+        r.setOnFocusChangeListener { _, has -> value.setTextColor(if (has) Col.ACCENT else Col.MUTED) }
+        value.setTextColor(Col.MUTED)
         r.setOnClickListener { onClick(); postDelayed({ refresh() }, 350) }
         panel.addView(r, lp(MATCH, WRAP).apply { bottomMargin = dp(8) })
         return r

@@ -8,8 +8,13 @@ data class Channel(
     val tvgId: String,
     /** MAC portal command; when set, the real URL is fetched just before playback. */
     val cmd: String = "",
-    var number: Int = 0
+    var number: Int = 0,
+    /** Playlist this channel came from. */
+    val pl: String = "",
+    /** Small text shown in the tile corner instead of the number (e.g. a temperature). */
+    var badge: String = ""
 ) {
+    val isWeather: Boolean get() = url.startsWith("weather:")
     val key: String get() = "$name|$group"
     /** Clean label used on tiles when there is no logo: "TR: Kanal D, HD" -> "Kanal D". */
     val initials: String

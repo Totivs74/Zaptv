@@ -1,28 +1,30 @@
 package com.zaptv.app
 
-import java.io.File
 import java.net.URLEncoder
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 
 class Repo(private val app: App) {
     private val prefs get() = app.prefs
-    private val listFile = File(app.filesDir, "channels.tsv")
-    val pastedFile = File(app.filesDir, "pasted.m3u")
+    val playlists = PlaylistStore(app, app.prefs)
     val epg = EpgStore(app)
+    val weather = WeatherStore(app)
 
     /** Background work: playlist / guide downloads, MAC portal links. */
     val io = Executors.newFixedThreadPool(2)
 
+    /** Channels of every playlist that is on, in playlist order. */
     @Volatile var channels: List<Channel> = emptyList()
         private set
     @Volatile var busy = false
         private set
-    private var stalker: Stalker? = null
-    private var playlistEpg = ""
+    private val stalkers = ConcurrentHashMap<String, Stalker>()
+    private val playlistEpg = ConcurrentHashMap<String, String>()
 
     companion object {
         const val RECENT = "Recent"
         const val FAV = "Favourites"
+        const val WEATHER = "Weather"
         const val ALL = "All"
     }
 
@@ -37,7 +39,13 @@ class Repo(private val app: App) {
 
     fun allGroups(): List<String> = channels.map { it.group }.distinct()
 
-    fun tabs(): List<String> = listOf(RECENT, FAV) + groups() + listOf(ALL)
+    fun tabs(): List<String> {
+        val t = arrayListOf(RECENT, FAV)
+        t.addAll(groups())
+        if (weather.cities().isNotEmpty()) t.add(WEATHER)
+        t.add(ALL)
+        return t
+    }
 
     fun channelsFor(group: String): List<Channel> {
         val hidden = prefs.hiddenGroups
@@ -47,6 +55,7 @@ class Repo(private val app: App) {
                 prefs.recent.mapNotNull { byKey[it] }
             }
             FAV -> { val f = prefs.favourites; channels.filter { it.key in f } }
+            WEATHER -> weather.cityChannels()
             ALL -> channels.filter { it.group !in hidden }
             else -> channels.filter { it.group == group }
         }
@@ -63,114 +72,139 @@ class Repo(private val app: App) {
         return added
     }
 
+    fun hasPlaylists(): Boolean = playlists.all().isNotEmpty()
+
     // ---------- Cache ----------
 
-    fun loadCached() {
-        if (listFile.exists()) {
-            val list = ArrayList<Channel>()
-            listFile.forEachLine { line ->
-                val f = line.split('\t')
-                if (f.size >= 7) list.add(Channel(f[0], f[1], f[2], f[3], f[4], f[5], f[6].toIntOrNull() ?: 0))
-            }
-            channels = list
+    private fun readCache(p: Playlist): List<Channel> {
+        val f = playlists.cacheFile(p.id)
+        if (!f.exists()) return emptyList()
+        val list = ArrayList<Channel>()
+        f.forEachLine { line ->
+            val x = line.split('\t')
+            if (x.size >= 7) list.add(Channel(x[0], x[1], x[2], x[3], x[4], x[5], x[6].toIntOrNull() ?: 0, pl = p.id))
         }
-        epg.loadCache()
+        return list
     }
 
-    private fun saveCache(list: List<Channel>) {
+    private fun writeCache(p: Playlist, list: List<Channel>) {
         fun c(s: String) = s.replace('\t', ' ').replace('\n', ' ').replace('\r', ' ')
-        val tmp = File(app.filesDir, "channels.tmp")
+        val f = playlists.cacheFile(p.id)
+        val tmp = java.io.File(f.parentFile, f.name + ".tmp")
         tmp.bufferedWriter().use { w ->
             for (ch in list) {
                 w.write(listOf(c(ch.name), c(ch.group), c(ch.logo), c(ch.url), c(ch.tvgId), c(ch.cmd), ch.number.toString()).joinToString("\t"))
                 w.write("\n")
             }
         }
-        tmp.renameTo(listFile)
+        tmp.renameTo(f)
     }
 
-    fun refreshDue(): Boolean = prefs.sourceType.isNotEmpty() &&
-        System.currentTimeMillis() - prefs.lastRefresh > 24 * 3600_000L
+    /** Rebuilds the combined list from the caches of the playlists that are on. Fast, no network. */
+    fun rebuild() {
+        val out = ArrayList<Channel>()
+        for (p in playlists.active()) out.addAll(readCache(p))
+        out.forEachIndexed { i, ch -> ch.number = i + 1 }
+        channels = out
+    }
+
+    fun loadCached() {
+        rebuild()
+        epg.loadCache()
+        weather.loadCache()
+    }
+
+    fun refreshDue(): Boolean = playlists.active().any { System.currentTimeMillis() - it.lastRefresh > 24 * 3600_000L }
+
+    /** Playlists that are on but have never been downloaded. */
+    fun missingCache(): Boolean = playlists.active().any { !playlists.cacheFile(it.id).exists() }
 
     // ---------- Refresh ----------
 
-    /** Reloads playlist then guide in the background. [onList] fires as soon as channels are ready. */
-    fun refresh(onList: (String?) -> Unit, onEpg: () -> Unit = {}) {
+    /**
+     * Downloads every playlist that is on (or only [onlyId]), then the guides.
+     * [onList] fires as soon as the channel list is ready; errors name the playlist that failed.
+     */
+    fun refresh(onList: (String?) -> Unit, onEpg: () -> Unit = {}, onlyId: String? = null) {
         if (busy) return
         busy = true
         io.execute {
-            var error: String? = null
-            try {
-                val list = fetchChannels()
-                if (list.isEmpty()) throw IllegalStateException("The playlist has no channels")
-                list.forEachIndexed { i, ch -> if (ch.number == 0) ch.number = i + 1 }
-                channels = list
-                saveCache(list)
-                prefs.lastRefresh = System.currentTimeMillis()
-            } catch (e: Exception) {
-                error = e.message ?: e.javaClass.simpleName
-            }
-            app.main.post { onList(error) }
-            if (error == null) {
-                val url = epgUrl()
-                if (url.isNotEmpty()) {
-                    runCatching { epg.update(url, channels) }
-                    prefs.lastEpgRefresh = System.currentTimeMillis()
+            val errors = ArrayList<String>()
+            for (p in playlists.active()) {
+                if (onlyId != null && p.id != onlyId) continue
+                try {
+                    val list = fetch(p)
+                    if (list.isEmpty()) throw IllegalStateException("no channels")
+                    writeCache(p, list)
+                    playlists.touch(p.id)
+                } catch (e: Exception) {
+                    errors.add("${p.name}: ${e.message ?: e.javaClass.simpleName}")
                 }
-                app.main.post { onEpg() }
             }
+            rebuild()
+            val err = if (errors.isEmpty()) null else errors.joinToString("; ")
+            app.main.post { onList(if (channels.isEmpty()) (err ?: "No channels") else err) }
+            val urls = playlists.active().mapNotNull { epgUrl(it).ifEmpty { null } }.distinct()
+            if (urls.isNotEmpty()) {
+                runCatching { epg.update(urls, channels) }
+                prefs.lastEpgRefresh = System.currentTimeMillis()
+            }
+            app.main.post { onEpg() }
             busy = false
         }
     }
 
     private fun enc(s: String) = URLEncoder.encode(s, "UTF-8")
 
-    private fun xtBase(): String {
-        var s = prefs.xtServer.trim().trimEnd('/')
+    private fun xtBase(p: Playlist): String {
+        var s = p.xtServer.trim().trimEnd('/')
         if (!s.startsWith("http")) s = "http://$s"
         return s
     }
 
-    private fun fetchChannels(): List<Channel> = when (prefs.sourceType) {
-        "m3u" -> {
-            val text = if (prefs.m3uUrl.isNotBlank()) Http.text(prefs.m3uUrl.trim())
-            else pastedFile.takeIf { it.exists() }?.readText() ?: ""
-            val r = M3u.parse(text)
-            playlistEpg = r.epgUrl
-            r.channels
+    private fun fetch(p: Playlist): List<Channel> {
+        val raw: List<Channel> = when (p.type) {
+            "m3u" -> {
+                val text = if (p.url.isNotBlank()) Http.text(p.url.trim())
+                else playlists.pastedFile(p.id).takeIf { it.exists() }?.readText() ?: ""
+                val r = M3u.parse(text)
+                playlistEpg[p.id] = r.epgUrl
+                r.channels
+            }
+            "xtream" -> {
+                val url = "${xtBase(p)}/get.php?username=${enc(p.xtUser)}&password=${enc(p.xtPass)}&type=m3u_plus&output=ts"
+                val r = M3u.parse(Http.text(url))
+                playlistEpg[p.id] = r.epgUrl
+                r.channels
+            }
+            "stalker" -> {
+                val s = Stalker(p.portal, p.mac)
+                stalkers[p.id] = s
+                s.channels()
+            }
+            else -> emptyList()
         }
-        "xtream" -> {
-            val url = "${xtBase()}/get.php?username=${enc(prefs.xtUser)}&password=${enc(prefs.xtPass)}&type=m3u_plus&output=ts"
-            val r = M3u.parse(Http.text(url))
-            playlistEpg = r.epgUrl
-            r.channels
-        }
-        "stalker" -> {
-            val s = Stalker(prefs.portal, prefs.mac)
-            stalker = s
-            s.channels()
-        }
-        else -> emptyList()
+        return raw.map { it.copy(pl = p.id) }
     }
 
-    fun epgUrl(): String {
-        if (prefs.epgUrl.isNotBlank()) return prefs.epgUrl.trim()
-        if (playlistEpg.isNotBlank()) return playlistEpg
-        if (prefs.sourceType == "xtream") return "${xtBase()}/xmltv.php?username=${enc(prefs.xtUser)}&password=${enc(prefs.xtPass)}"
+    private fun epgUrl(p: Playlist): String {
+        if (p.epgUrl.isNotBlank()) return p.epgUrl.trim()
+        playlistEpg[p.id]?.let { if (it.isNotBlank()) return it }
+        if (p.type == "xtream") return "${xtBase(p)}/xmltv.php?username=${enc(p.xtUser)}&password=${enc(p.xtPass)}"
         return ""
     }
 
     /** Returns a playable URL. For MAC portals this asks the portal for a fresh link (blocking). */
     fun resolve(ch: Channel): String {
         if (ch.cmd.isEmpty()) return ch.url
-        val s = stalker ?: Stalker(prefs.portal, prefs.mac).also { stalker = it }
+        val p = playlists.all().firstOrNull { it.id == ch.pl } ?: return ch.url
+        val s = stalkers[p.id] ?: Stalker(p.portal, p.mac).also { stalkers[p.id] = it }
         return s.link(ch.cmd)
     }
 
-    fun sourceLabel(): String = when (prefs.sourceType) {
-        "m3u" -> if (prefs.m3uUrl.isNotBlank()) "M3U link" else "Pasted M3U"
-        "xtream" -> "Xtream Codes"
-        "stalker" -> "MAC portal"
-        else -> "Not set"
+    fun sourceLabel(): String {
+        val all = playlists.all()
+        if (all.isEmpty()) return "None yet"
+        return "${all.count { it.on }} of ${all.size} on"
     }
 }

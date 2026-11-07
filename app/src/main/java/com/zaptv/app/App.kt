@@ -17,6 +17,9 @@ class App : Application() {
     /** Set by MainActivity; called when the phone page saves a new source. */
     var onSourceSaved: (() -> Unit)? = null
 
+    /** Set by MainActivity; called when weather cities change. */
+    var onWeatherChanged: (() -> Unit)? = null
+
     /** Set when settings changed something the grid shows (groups, favourites, list). */
     var gridDirty = false
 

@@ -18,7 +18,7 @@ class MainActivity : Activity(), PlayerController.Listener {
         const val REQ_VOICE = 8
     }
 
-    private enum class Mode { PLAYER, GRID, GUIDE, OPTIONS, SETUP }
+    private enum class Mode { PLAYER, GRID, GUIDE, OPTIONS, SETUP, WEATHER }
 
     val app: App get() = application as App
     private val repo get() = app.repo
@@ -32,10 +32,19 @@ class MainActivity : Activity(), PlayerController.Listener {
     private lateinit var voice: VoiceOverlay
     private lateinit var setup: SetupOverlay
     private lateinit var banner: BannerView
+    private lateinit var weather: WeatherOverlay
+    private val clockView by lazy { label("", 20f, Col.TEXT, true) }
+    private val clockTick = object : Runnable {
+        override fun run() {
+            clockView.text = Fmt.time(System.currentTimeMillis())
+            clockView.postDelayed(this, 20_000)
+        }
+    }
     private val statusView by lazy { label("", 15f, Col.TEXT, true) }
     private val numberView by lazy { label("", 40f, Col.TEXT, true) }
 
     private var mode = Mode.PLAYER
+        set(v) { field = v; syncClock() }
     private var guideReturn = Mode.PLAYER
     private var current: Channel? = null
     private var started = false
@@ -51,7 +60,7 @@ class MainActivity : Activity(), PlayerController.Listener {
     private val bufferingHint = Runnable { status("Loading…", sticky = true) }
     private val hourly = object : Runnable {
         override fun run() {
-            if (repo.refreshDue()) backgroundRefresh()
+            if (repo.refreshDue() || repo.missingCache()) backgroundRefresh()
             statusView.postDelayed(this, 3600_000L)
         }
     }
@@ -81,7 +90,13 @@ class MainActivity : Activity(), PlayerController.Listener {
         guide = GuideOverlay(this); root.addView(guide, FrameLayout.LayoutParams(MATCH, MATCH))
         options = OptionsOverlay(this); root.addView(options, FrameLayout.LayoutParams(MATCH, MATCH))
         setup = SetupOverlay(this); root.addView(setup, FrameLayout.LayoutParams(MATCH, MATCH))
+        weather = WeatherOverlay(this); root.addView(weather, FrameLayout.LayoutParams(MATCH, MATCH))
         voice = VoiceOverlay(this); root.addView(voice, FrameLayout.LayoutParams(MATCH, MATCH))
+
+        // Clock while watching (the channel list has its own)
+        clockView.background = rounded(0x99030725.toInt(), dp(12).toFloat())
+        clockView.setPadding(dp(14), dp(6), dp(14), dp(6))
+        root.addView(clockView, FrameLayout.LayoutParams(WRAP, WRAP, Gravity.TOP or Gravity.END).apply { setMargins(0, dp(22), dp(28), 0) })
 
         statusView.background = rounded(Col.CARD, dp(10).toFloat())
         statusView.setPadding(dp(14), dp(8), dp(14), dp(8))
@@ -95,6 +110,8 @@ class MainActivity : Activity(), PlayerController.Listener {
         setContentView(root)
 
         app.onSourceSaved = { onSourceSaved() }
+        app.onWeatherChanged = { grid.refreshItems() }
+        clockView.post(clockTick)
         App.syncAutoStartService(this)
         startup()
     }
@@ -102,10 +119,16 @@ class MainActivity : Activity(), PlayerController.Listener {
     override fun onStart() {
         super.onStart()
         grid.applySettings()
-        if (app.gridDirty && repo.channels.isNotEmpty()) {
+        syncClock()
+        if (app.gridDirty) {
             app.gridDirty = false
-            grid.reload()
-            current = current?.let { repo.byKey(it.key) } ?: current
+            repo.rebuild()
+            if (repo.channels.isNotEmpty()) {
+                if (mode == Mode.SETUP) hideSetup()
+                grid.reload()
+                current = current?.let { repo.byKey(it.key) } ?: current
+            } else if (!repo.hasPlaylists()) showSetup(null)
+            if (repo.missingCache()) backgroundRefresh()
         }
         if (started && !player.isActive) player.resume()
     }
@@ -118,7 +141,8 @@ class MainActivity : Activity(), PlayerController.Listener {
     }
 
     override fun onDestroy() {
-        if (app.onSourceSaved != null) app.onSourceSaved = null
+        app.onSourceSaved = null
+        app.onWeatherChanged = null
         player.release()
         statusView.removeCallbacks(hourly)
         super.onDestroy()
@@ -139,8 +163,9 @@ class MainActivity : Activity(), PlayerController.Listener {
     }
 
     private fun afterCache() {
+        repo.weather.refreshAll { grid.refreshItems() }
         if (repo.channels.isEmpty()) {
-            if (prefs.sourceType.isEmpty()) {
+            if (!repo.hasPlaylists()) {
                 showSetup(null)
             } else {
                 showSetup("Loading channels…")
@@ -163,8 +188,9 @@ class MainActivity : Activity(), PlayerController.Listener {
 
     /** Silent refresh: playback continues, the grid updates when done. */
     private fun backgroundRefresh() {
-        repo.refresh(onList = { err ->
-            if (err == null) {
+        repo.refresh(onList = { _ ->
+            if (repo.channels.isNotEmpty()) {
+                if (mode == Mode.SETUP) hideSetup()
                 grid.reload()
                 current = current?.let { repo.byKey(it.key) } ?: current
             }
@@ -174,9 +200,10 @@ class MainActivity : Activity(), PlayerController.Listener {
     /** First load or a new source from the phone page. */
     private fun loadNow() {
         repo.refresh(onList = { err ->
-            if (err != null) {
-                showSetup("Couldn't load the playlist: $err")
+            if (repo.channels.isEmpty()) {
+                showSetup(if (repo.hasPlaylists()) "Couldn't load channels: ${err ?: "no channels"}" else null)
             } else {
+                if (err != null) status("Some playlists failed: $err")
                 hideSetup()
                 grid.reload()
                 val first = repo.byKey(prefs.lastChannelKey) ?: repo.channelsFor(grid.group).firstOrNull() ?: repo.channels.first()
@@ -278,7 +305,7 @@ class MainActivity : Activity(), PlayerController.Listener {
     // ---------------------------------------------------------------- overlays
 
     private fun closeOverlays() {
-        grid.close(); guide.close(); options.close()
+        grid.close(); guide.close(); options.close(); weather.close()
         if (mode != Mode.SETUP) mode = Mode.PLAYER
     }
 
@@ -309,6 +336,22 @@ class MainActivity : Activity(), PlayerController.Listener {
         if (guideReturn == Mode.GRID) { grid.open(current); mode = Mode.GRID } else mode = Mode.PLAYER
     }
 
+    fun openWeather(index: Int) {
+        grid.close()
+        weather.open(index)
+        mode = Mode.WEATHER
+    }
+
+    private fun closeWeather() {
+        weather.close()
+        showGrid()
+    }
+
+    private fun syncClock() {
+        val show = prefs.showClock && (mode == Mode.PLAYER || mode == Mode.OPTIONS)
+        clockView.visibility = if (show) View.VISIBLE else View.GONE
+    }
+
     private fun showOptions() {
         banner.hideNow()
         options.open()
@@ -316,7 +359,7 @@ class MainActivity : Activity(), PlayerController.Listener {
     }
 
     private fun showSetup(msg: String?) {
-        grid.close(); guide.close(); options.close()
+        grid.close(); guide.close(); options.close(); weather.close()
         setup.show(msg)
         mode = Mode.SETUP
     }
@@ -403,10 +446,21 @@ class MainActivity : Activity(), PlayerController.Listener {
                 if (a != null) { if (first) doAction(a); return true }
                 return super.dispatchKeyEvent(e)
             }
+            Mode.WEATHER -> {
+                when (code) {
+                    KeyEvent.KEYCODE_BACK -> { if (first) closeWeather() }
+                    KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_CHANNEL_UP, KeyEvent.KEYCODE_PAGE_UP -> { if (down) weather.changeCity(1) }
+                    KeyEvent.KEYCODE_DPAD_DOWN, KeyEvent.KEYCODE_CHANNEL_DOWN, KeyEvent.KEYCODE_PAGE_DOWN -> { if (down) weather.changeCity(-1) }
+                    KeyEvent.KEYCODE_DPAD_LEFT -> { if (down) weather.changeDay(-1) }
+                    KeyEvent.KEYCODE_DPAD_RIGHT -> { if (down) weather.changeDay(1) }
+                    else -> return super.dispatchKeyEvent(e)
+                }
+                return true
+            }
             Mode.GUIDE -> {
                 if (code == KeyEvent.KEYCODE_BACK || code == KeyEvent.KEYCODE_GUIDE) { if (first) closeGuide(); return true }
-                if (code == KeyEvent.KEYCODE_DPAD_LEFT) { if (down) guide.shift(-1); return true }
-                if (code == KeyEvent.KEYCODE_DPAD_RIGHT) { if (down) guide.shift(1); return true }
+                if (code == KeyEvent.KEYCODE_DPAD_LEFT) { if (down) guide.moveCell(-1); return true }
+                if (code == KeyEvent.KEYCODE_DPAD_RIGHT) { if (down) guide.moveCell(1); return true }
                 if (KeyMap.actionFor(prefs, code) == Action.GUIDE) { if (first) closeGuide(); return true }
                 return super.dispatchKeyEvent(e)
             }

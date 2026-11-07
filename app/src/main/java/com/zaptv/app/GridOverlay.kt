@@ -93,7 +93,10 @@ class GridOverlay(private val act: MainActivity) : FrameLayout(act) {
             refreshHighlight()
             if (has) showEpg(items.getOrNull(grid.selectedItemPosition))
         }
-        grid.setOnItemClickListener { _, _, pos, _ -> items.getOrNull(pos)?.let { act.playFromGrid(it) } }
+        grid.setOnItemClickListener { _, _, pos, _ ->
+            val c = items.getOrNull(pos) ?: return@setOnItemClickListener
+            if (c.isWeather) act.openWeather(c.url.removePrefix("weather:").toIntOrNull() ?: 0) else act.playFromGrid(c)
+        }
         grid.setOnItemLongClickListener { _, _, _, _ ->
             if (prefs.keyFor(Action.VOICE) == KeyMap.LONG_OK) { act.doAction(Action.VOICE); true } else false
         }
@@ -106,20 +109,20 @@ class GridOverlay(private val act: MainActivity) : FrameLayout(act) {
 
         // EPG panel for the focused tile
         val panel = act.vbox()
-        panel.background = rounded(Col.SURF, dp(16).toFloat(), dp(1), Col.LINE)
+        panel.background = rounded(Col.CARD, dp(20).toFloat(), dp(1), Col.LINE)
         panel.setPadding(dp(20), dp(14), dp(20), dp(14))
         val head = act.hbox()
         head.addView(epgName, lp(0, WRAP, 1f))
         head.addView(epgHint, lp(WRAP, WRAP))
         panel.addView(head, lp(MATCH, WRAP))
-        val nowLbl = act.label("NOW", 12f, Col.ACCENT, true)
+        val nowLbl = act.label("Now", 13f, Col.CORAL, true)
         nowRow.addView(nowLbl, lp(dp(56), WRAP))
         nowTitle.maxLines = 1; nowTitle.ellipsize = TextUtils.TruncateAt.END
         nowRow.addView(nowTitle, lp(0, WRAP, 1f))
         nowRow.addView(nowTime, lp(WRAP, WRAP))
         panel.addView(nowRow, lp(MATCH, WRAP).apply { topMargin = dp(10) })
         panel.addView(bar, lp(MATCH, dp(4)).apply { topMargin = dp(8) })
-        val nextLbl = act.label("NEXT", 12f, Col.MUTED, true)
+        val nextLbl = act.label("Next", 13f, Col.MUTED, true)
         nextRow.addView(nextLbl, lp(dp(56), WRAP))
         nextTitle.maxLines = 1; nextTitle.ellipsize = TextUtils.TruncateAt.END
         nextRow.addView(nextTitle, lp(0, WRAP, 1f))
@@ -131,10 +134,10 @@ class GridOverlay(private val act: MainActivity) : FrameLayout(act) {
         visibility = View.GONE
     }
 
-    private fun button(text: String): TextView = act.label(text, 15f, Col.TEXT, true).apply {
-        setPadding(dp(16), dp(8), dp(16), dp(8))
-        background = focusBg(act, Col.SURF2, 999)
-        setTextColor(focusText())
+    private fun button(text: String): TextView = act.label(text, 15f, Col.MUTED, true).apply {
+        setPadding(dp(18), dp(9), dp(18), dp(9))
+        background = pillBg(act)
+        setTextColor(pillText())
         isFocusable = true
     }
 
@@ -195,6 +198,7 @@ class GridOverlay(private val act: MainActivity) : FrameLayout(act) {
             epgName.text = when {
                 items.isEmpty() && name == Repo.FAV -> "No favourites yet. Add them from the ▶ menu while watching."
                 items.isEmpty() && name == Repo.RECENT -> "Nothing watched yet"
+            name == Repo.WEATHER -> "${items.size} cities. Add more in Settings, Weather cities."
                 else -> "${items.size} channels"
             }
             nowRow.visibility = View.GONE; nextRow.visibility = View.GONE; bar.visibility = View.GONE
@@ -205,7 +209,7 @@ class GridOverlay(private val act: MainActivity) : FrameLayout(act) {
         visibility = View.VISIBLE
         applySettings()
         // Recent and Favourites change while watching: refresh them each time the grid opens.
-        if (group == Repo.RECENT || group == Repo.FAV) {
+        if (group == Repo.RECENT || group == Repo.FAV || group == Repo.WEATHER) {
             items = repo.channelsFor(group)
             adapter.notifyDataSetChanged()
         }
@@ -239,12 +243,34 @@ class GridOverlay(private val act: MainActivity) : FrameLayout(act) {
         } else adapter.notifyDataSetChanged()
     }
 
+    /** Re-reads the current tab (weather temperatures, recent, favourites). */
+    fun refreshItems() {
+        if (visibility != View.VISIBLE) return
+        val pos = grid.selectedItemPosition
+        items = repo.channelsFor(group)
+        adapter.notifyDataSetChanged()
+        if (items.isNotEmpty() && pos >= 0) grid.setSelection(pos.coerceAtMost(items.size - 1))
+        refreshEpg()
+    }
+
     fun refreshEpg() {
         if (visibility == View.VISIBLE && grid.hasFocus()) showEpg(items.getOrNull(grid.selectedItemPosition))
     }
 
     private fun showEpg(ch: Channel?) {
         if (ch == null) return
+        if (ch.isWeather) {
+            epgName.text = "${ch.name} weather"
+            val city = repo.weather.cities().getOrNull(ch.url.removePrefix("weather:").toIntOrNull() ?: -1)
+            val f = city?.let { repo.weather.get(it) }
+            nowRow.visibility = View.VISIBLE; bar.visibility = View.GONE; nextRow.visibility = View.GONE
+            if (f != null) {
+                val d = f.days.firstOrNull()
+                nowTitle.text = WeatherStore.describe(f.code) + ", ${f.temp}°" + (d?.let { "  (${it.hi}° / ${it.lo}°)" } ?: "")
+                nowTime.text = d?.let { "Rain ${it.rain}%   Wind ${it.wind} km/h" } ?: ""
+            } else { nowTitle.text = "OK: open the 10-day forecast"; nowTime.text = "" }
+            return
+        }
         epgName.text = "${ch.number}  ${ch.name}" + if (repo.isFav(ch)) "  ★" else ""
         val now = System.currentTimeMillis()
         val (cur, next) = repo.epg.nowNext(ch, now)
@@ -287,6 +313,7 @@ class GridOverlay(private val act: MainActivity) : FrameLayout(act) {
             root.addView(logo, LayoutParams(MATCH, MATCH).apply { setMargins(dp(14), dp(12), dp(14), dp(10)) })
             initials.gravity = Gravity.CENTER
             initials.maxLines = 2
+            initials.setTextColor(Col.TEXT)
             root.addView(initials, LayoutParams(MATCH, MATCH).apply { setMargins(dp(6), dp(6), dp(6), dp(6)) })
             root.addView(num, LayoutParams(WRAP, WRAP).apply { setMargins(dp(8), dp(6), 0, 0) })
             root.addView(star, LayoutParams(WRAP, WRAP, Gravity.END or Gravity.TOP).apply { setMargins(0, dp(4), dp(8), 0) })
@@ -295,20 +322,25 @@ class GridOverlay(private val act: MainActivity) : FrameLayout(act) {
         }
 
         fun bind(c: Channel) {
-            num.text = c.number.toString()
+            num.text = if (c.isWeather) c.badge else c.number.toString()
             initials.text = c.initials
             star.visibility = if (repo.isFav(c)) View.VISIBLE else View.GONE
             Logos.load(c.logo, logo, initials)
         }
 
+        /** Neon focus: the tile lifts with a cyan frame; the logo itself is never covered. */
         fun style(on: Boolean) {
-            val r = dp(14).toFloat()
-            root.background = if (on) rounded(Col.TEXT, r, dp(3), Col.ACCENT) else rounded(Col.SURF2, r, dp(1), Col.LINE)
-            initials.setTextColor(if (on) Col.DARK else Col.TEXT)
-            num.setTextColor(if (on) Col.SUBTLE else Col.MUTED)
-            val s = if (on) 1.08f else 1f
+            val r = dp(16).toFloat()
+            root.background = if (on) rounded(Col.SURF2, r, dp(3), Col.ACCENT) else rounded(Col.SURF, r, dp(1), Col.LINE)
+            num.setTextColor(if (on) Col.ACCENT else Col.SUBTLE)
+            val s = if (on) 1.07f else 1f
             root.scaleX = s; root.scaleY = s
-            root.translationZ = if (on) dp(8).toFloat() else 0f
+            root.translationY = if (on) -dp(5).toFloat() else 0f
+            root.translationZ = if (on) dp(10).toFloat() else 0f
+            if (android.os.Build.VERSION.SDK_INT >= 28) {
+                root.outlineSpotShadowColor = Col.ACCENT
+                root.outlineAmbientShadowColor = Col.ACCENT
+            }
         }
     }
 

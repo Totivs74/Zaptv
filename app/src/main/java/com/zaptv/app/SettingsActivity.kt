@@ -39,16 +39,17 @@ class SettingsActivity : Activity() {
         val onClick: (() -> Unit)? = null
     )
 
-    private val sections = listOf("Playlist", "Channels", "Startup", "Remote keys", "Voice command", "Player", "Display", "About")
+    private val sections = listOf("Playlists", "Channels", "Startup", "Remote keys", "Voice command", "Player", "Display", "Weather cities", "About")
     private val subs = listOf(
-        "One source. Add or change it from your phone.",
+        "Every playlist that is on adds its channels. Turn them on or off any time.",
         "Fewer tiles, faster browsing.",
         "Start watching the moment the TV turns on.",
         "Assign any action to any key inside the app.",
         "Hold the key and say the channel name in Turkish.",
         "Speed and uninterrupted viewing.",
         "Kept simple.",
-        "Setup and troubleshooting."
+        "Each city becomes a channel in the Weather tab.",
+        "ZapTV, a fast IPTV player designed by Bulent Cansever."
     )
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -97,12 +98,16 @@ class SettingsActivity : Activity() {
     // ------------------------------------------------------------------ rows
 
     private fun rows(s: Int): List<Row> = when (s) {
-        0 -> listOf(
-            Row("Add / change source", { "From phone" }, "Open ${app.web.address().ifEmpty { "the address" }} on your phone") { showPhoneDialog() },
-            Row("Active source", { repo.sourceLabel() }),
-            Row("EPG link", { if (prefs.epgUrl.isBlank()) "Auto from playlist" else "Custom" }, "Only needed if the playlist has none. Set it on the phone page."),
-            Row("Auto refresh", { "Once a day" }, "In the background, playback is not interrupted"),
-            Row("Refresh playlist and guide now", { if (repo.busy) "Working…" else "Refresh" }) { refreshNow() }
+        0 -> repo.playlists.all().map { pl ->
+            Row(pl.name, { if (repo.playlists.all().firstOrNull { it.id == pl.id }?.on == true) "On" else "Off" }, pl.label(), toggle = true) {
+                val now = repo.playlists.all().firstOrNull { it.id == pl.id } ?: return@Row
+                repo.playlists.setOn(pl.id, !now.on)
+                app.gridDirty = true
+            }
+        } + listOf(
+            Row("Add a playlist", { "From laptop or phone" }, "Upload a file, paste a link, Xtream or MAC portal") { showPhoneDialog() },
+            Row("Delete a playlist", { "Choose" }) { deletePlaylistDialog() },
+            Row("Refresh playlists and guide now", { if (repo.busy) "Working…" else "Refresh" }, "Also happens by itself once a day") { refreshNow() }
         )
         1 -> listOf(
             Row("Hide groups", { "${prefs.hiddenGroups.size} hidden" }, "Hidden groups don't appear in the grid or when zapping") { hideGroupsDialog() },
@@ -118,18 +123,13 @@ class SettingsActivity : Activity() {
             Row("Auto-start when waking from sleep", { onOff(prefs.autoWake) }, toggle = true) {
                 prefs.autoWake = !prefs.autoWake; App.syncAutoStartService(this); askOverlayIfNeeded()
             },
-            Row("Open with", { if (prefs.openWithLast) "Last channel" else "Logo grid" }) { prefs.openWithLast = !prefs.openWithLast },
+            Row("Open with", { if (prefs.openWithLast) "Last channel" else "Channel list" }) { prefs.openWithLast = !prefs.openWithLast },
             Row("Display over other apps", { if (App.canAutoStart(this)) "Allowed" else "Not allowed" }, "Android requires this for auto-start") { openOverlaySettings() }
         )
         3 -> Action.values().map { a ->
             Row(a.label, { KeyMap.name(prefs.keyFor(a)) }, if (a == Action.VOICE) "Press OK to use \"Hold OK\"" else "") { captureKey(a) }
         } + listOf(
-            Row("Reset to defaults", { "Reset" }) { prefs.resetKeys(); toast("Keys reset") },
-            Row("System-wide: key that opens ZapTV", { KeyMap.name(prefs.globalLaunchKey) },
-                "Works from anywhere, e.g. instead of an app button. May make the remote feel slower.") { captureGlobalKey() },
-            Row("Enable system-wide key in Android", { "Open" }, "Turn on ZapTV under Accessibility. Off by default.") {
-                runCatching { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }.onFailure { toast("Not available on this device") }
-            }
+            Row("Reset to defaults", { "Reset" }) { prefs.resetKeys(); toast("Keys reset") }
         )
         4 -> listOf(
             Row("Voice command", { onOff(prefs.voiceEnabled) }, "Turkish recognition needs internet", toggle = true) { prefs.voiceEnabled = !prefs.voiceEnabled },
@@ -155,17 +155,49 @@ class SettingsActivity : Activity() {
             }
         )
         6 -> listOf(
+            Row("Show clock", { onOff(prefs.showClock) }, "Top right, in the channel list and while watching", toggle = true) { prefs.showClock = !prefs.showClock },
             Row("Grid size", { if (prefs.gridCols >= 6) "6 × 3" else "5 × 3" }, "5 × 3 shows bigger logos") {
                 prefs.gridCols = if (prefs.gridCols >= 6) 5 else 6
-            },
-            Row("Show clock", { onOff(prefs.showClock) }, toggle = true) { prefs.showClock = !prefs.showClock }
+            }
+        )
+        7 -> repo.weather.cities().map { c ->
+            Row(c.name, { repo.weather.get(c)?.let { "${it.temp}°" } ?: "" }, c.country + ". OK removes it.") { removeCityDialog(c.name) }
+        } + listOf(
+            Row("Add a city", { "From laptop or phone" }, "Type the city name on the ZapTV page") { showPhoneDialog() }
         )
         else -> listOf(
+            Row("Created by", { "Bulent Cansever" }),
             Row("Version", { versionName() }),
-            Row("Phone setup page", { app.web.address().ifEmpty { "No network" } }),
-            Row("Portal MAC address", { prefs.mac.ifEmpty { "Not set" } }, "The MAC your provider registered, entered on the phone page"),
+            Row("Laptop / phone page", { app.web.address().ifEmpty { "No network" } }),
+            Row("Weather data", { "Open-Meteo.com" }, "Free weather service, data licensed CC BY 4.0"),
             Row("Clear cache", { "Clear" }, "Fixes most issues without reinstalling") { clearCache() }
         )
+    }
+
+    private fun deletePlaylistDialog() {
+        val all = repo.playlists.all()
+        if (all.isEmpty()) { toast("No playlists yet"); return }
+        AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+            .setTitle("Delete which playlist?")
+            .setItems(all.map { it.name + "  (" + it.label() + ")" }.toTypedArray()) { _, which ->
+                val p = all[which]
+                AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                    .setTitle("Delete \"${p.name}\"?")
+                    .setMessage("Its channels disappear from ZapTV. You can add it again later.")
+                    .setPositiveButton("Delete") { _, _ -> repo.playlists.delete(p.id); app.gridDirty = true; render() }
+                    .setNegativeButton("Cancel", null)
+                    .show()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun removeCityDialog(name: String) {
+        AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+            .setTitle("Remove $name from Weather?")
+            .setPositiveButton("Remove") { _, _ -> repo.weather.removeCity(name); render() }
+            .setNegativeButton("Cancel", null)
+            .show()
     }
 
     private fun render() {
@@ -179,7 +211,7 @@ class SettingsActivity : Activity() {
     private fun rowView(r: Row): View {
         val box = hbox()
         box.isFocusable = true
-        box.background = focusBg(this, Col.SURF, 12, Col.SURF)
+        box.background = focusBg(this, Col.SURF, 14, Col.SURF)
         box.setPadding(dp(18), dp(13), dp(18), dp(13))
         val texts = vbox()
         val t = label(r.title, 16f, Col.TEXT, true)
@@ -193,11 +225,8 @@ class SettingsActivity : Activity() {
             v.background = toggleBg(r.value() == "On")
             box.addView(v, lp(dp(46), dp(26)))
         } else box.addView(v, lp(WRAP, WRAP).apply { leftMargin = dp(12) })
-        box.setOnFocusChangeListener { _, has ->
-            val c = if (has) Col.DARK else Col.TEXT
-            t.setTextColor(c); if (!r.toggle) v.setTextColor(c)
-            n.setTextColor(if (has) Col.SUBTLE else Col.MUTED)
-        }
+        if (!r.toggle) v.setTextColor(Col.MUTED)
+        box.setOnFocusChangeListener { _, has -> if (!r.toggle) v.setTextColor(if (has) Col.ACCENT else Col.MUTED) }
         box.setOnClickListener {
             val action = r.onClick ?: return@setOnClickListener
             action()
@@ -209,7 +238,7 @@ class SettingsActivity : Activity() {
         return box
     }
 
-    private fun toggleBg(on: Boolean) = rounded(if (on) Col.ACCENT else Col.SUBTLE, dp(13).toFloat(), dp(3), if (on) Col.ACCENT else Col.SUBTLE)
+    private fun toggleBg(on: Boolean) = rounded(if (on) Col.ACCENT else Col.SUBTLE, dp(13).toFloat())
 
     private fun onOff(b: Boolean) = if (b) "On" else "Off"
     private fun langName(l: String) = when (l) { "tr" -> "Turkish"; "en" -> "English"; else -> "Stream default" }
@@ -241,7 +270,7 @@ class SettingsActivity : Activity() {
     }
 
     private fun refreshNow() {
-        if (prefs.sourceType.isEmpty()) { toast("Add a source first"); return }
+        if (!repo.hasPlaylists()) { toast("Add a playlist first"); return }
         toast("Refreshing…")
         repo.refresh(onList = { err ->
             app.gridDirty = true

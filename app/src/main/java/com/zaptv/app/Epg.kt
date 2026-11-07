@@ -76,14 +76,26 @@ class EpgStore(ctx: Context) {
     }
 
     /** Downloads and parses an XMLTV guide, keeping only what the playlist needs (now - 2h .. now + 26h). */
-    fun update(url: String, channels: List<Channel>) {
+    fun update(urls: List<String>, channels: List<Channel>) {
         val wantedIds = channels.mapNotNull { it.tvgId.ifEmpty { null } }.toHashSet()
         val wantedNames = channels.map { Norm.key(it.name) }.toHashSet()
-        Http.stream(url).use { parse(it, wantedIds, wantedNames) }
+        val allProgs = HashMap<String, List<Programme>>()
+        val allNames = HashMap<String, String>()
+        for (u in urls) {
+            runCatching {
+                Http.stream(u).use { parse(it, wantedIds, wantedNames, allProgs, allNames) }
+            }
+        }
+        if (allProgs.isEmpty()) return
+        names = allNames
+        progs = allProgs
         save()
     }
 
-    private fun parse(input: InputStream, wantedIds: Set<String>, wantedNames: Set<String>) {
+    private fun parse(
+        input: InputStream, wantedIds: Set<String>, wantedNames: Set<String>,
+        outProgs: HashMap<String, List<Programme>>, outNames: HashMap<String, String>
+    ) {
         val now = System.currentTimeMillis()
         val from = now - 2 * 3600_000L
         val to = now + 26 * 3600_000L
@@ -147,7 +159,7 @@ class EpgStore(ctx: Context) {
             ev = xp.next()
         }
         for (l in result.values) l.sortBy { it.start }
-        names = nameToId.filterValues { it in result.keys }
-        progs = result
+        for ((k, v) in result) if (!outProgs.containsKey(k)) outProgs[k] = v
+        for ((k, v) in nameToId) if (v in result.keys) outNames.putIfAbsent(k, v)
     }
 }

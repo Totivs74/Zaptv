@@ -19,6 +19,8 @@ class GuideOverlay(private val act: MainActivity) : FrameLayout(act) {
     private val slots = List(4) { act.label("", 13f, Col.MUTED) }
     private var channels: List<Channel> = emptyList()
     private var windowStart = 0L
+    /** Which programme in the selected row is highlighted. */
+    private var cell = 0
     private val span = 2 * 3600_000L
     private val adapter = RowAdapter()
 
@@ -40,14 +42,20 @@ class GuideOverlay(private val act: MainActivity) : FrameLayout(act) {
 
         list.divider = ColorDrawable(0)
         list.dividerHeight = dp(6)
-        list.selector = rounded(0, dp(10).toFloat(), dp(3), Col.ACCENT)
-        list.setDrawSelectorOnTop(true)
+        list.selector = ColorDrawable(0)
+        list.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(p: android.widget.AdapterView<*>?, v: View?, pos: Int, id: Long) {
+                cell = cell.coerceAtMost(cellsOf(channels.getOrNull(pos)).size - 1).coerceAtLeast(0)
+                adapter.notifyDataSetChanged()
+            }
+            override fun onNothingSelected(p: android.widget.AdapterView<*>?) {}
+        }
         list.isVerticalScrollBarEnabled = false
         list.adapter = adapter
         list.setOnItemClickListener { _, _, pos, _ -> channels.getOrNull(pos)?.let { act.playFromGuide(it) } }
         root.addView(list, lp(MATCH, 0, 1f))
 
-        root.addView(act.label("OK: open channel     Left / Right: time     Back: close", 12f, Col.MUTED),
+        root.addView(act.label("OK on a programme opens its channel     ◀ ▶ programmes     Back: close", 12f, Col.MUTED),
             lp(WRAP, WRAP).apply { topMargin = dp(8) })
         visibility = View.GONE
     }
@@ -57,6 +65,7 @@ class GuideOverlay(private val act: MainActivity) : FrameLayout(act) {
     fun open(chs: List<Channel>, current: Channel?) {
         channels = chs
         windowStart = floor30(System.currentTimeMillis())
+        cell = 0
         updateHeader()
         adapter.notifyDataSetChanged()
         visibility = View.VISIBLE
@@ -66,6 +75,24 @@ class GuideOverlay(private val act: MainActivity) : FrameLayout(act) {
     }
 
     fun close() { visibility = View.GONE }
+
+    private fun cellsOf(ch: Channel?): List<Programme> {
+        if (ch == null) return emptyList()
+        val ws = windowStart
+        val we = ws + span
+        return repo.epg.forChannel(ch).filter { it.stop > ws && it.start < we }
+    }
+
+    /** ◀ ▶ moves between programmes; past the edge it scrolls the time window. */
+    fun moveCell(step: Int) {
+        val n = cellsOf(channels.getOrNull(list.selectedItemPosition)).size
+        val next = cell + step
+        if (n > 0 && next in 0 until n) { cell = next; adapter.notifyDataSetChanged(); return }
+        shift(step)
+        val m = cellsOf(channels.getOrNull(list.selectedItemPosition)).size
+        cell = if (step > 0) 0 else maxOf(0, m - 1)
+        adapter.notifyDataSetChanged()
+    }
 
     fun shift(step: Int) {
         val nowFloor = floor30(System.currentTimeMillis())
@@ -97,12 +124,15 @@ class GuideOverlay(private val act: MainActivity) : FrameLayout(act) {
                 addView(act.hbox(), lp(0, MATCH, 1f))
             }
             val ch = channels[position]
-            (row.getChildAt(0) as TextView).text = "${ch.number}  ${ch.name}"
-            fill(row.getChildAt(1) as LinearLayout, ch)
+            val selected = position == list.selectedItemPosition
+            val nameCell = row.getChildAt(0) as TextView
+            nameCell.text = "${ch.number}  ${ch.name}"
+            nameCell.background = rounded(if (selected) Col.SURF2 else Col.SURF, dp(10).toFloat(), if (selected) dp(1) else 0, Col.ACCENT)
+            fill(row.getChildAt(1) as LinearLayout, ch, if (selected) cell else -1)
             return row
         }
 
-        private fun fill(box: LinearLayout, ch: Channel) {
+        private fun fill(box: LinearLayout, ch: Channel, focusIdx: Int) {
             box.removeAllViews()
             val ws = windowStart
             val we = ws + span
@@ -110,27 +140,31 @@ class GuideOverlay(private val act: MainActivity) : FrameLayout(act) {
             var cursor = ws
             val progs = repo.epg.forChannel(ch).filter { it.stop > ws && it.start < we }
             if (progs.isEmpty()) {
-                box.addView(block("No guide info", "", false), lp(0, MATCH, 1f))
+                box.addView(block("No guide info", "", false, focusIdx >= 0), lp(0, MATCH, 1f))
                 return
             }
-            for (p in progs) {
+            for ((i, p) in progs.withIndex()) {
                 val s = maxOf(p.start, ws)
                 val e = minOf(p.stop, we)
                 if (s > cursor) box.addView(View(act), lp(0, MATCH, (s - cursor).toFloat()))
                 val live = p.start <= now && p.stop > now
-                box.addView(block(p.title, Fmt.range(p), live), lp(0, MATCH, (e - s).toFloat()).apply { rightMargin = dp(3) })
+                box.addView(block(p.title, (if (live) "On now  " else "") + Fmt.range(p), live, i == focusIdx), lp(0, MATCH, (e - s).toFloat()).apply { rightMargin = dp(4) })
                 cursor = e
             }
             if (cursor < we) box.addView(View(act), lp(0, MATCH, (we - cursor).toFloat()))
         }
 
-        private fun block(title: String, time: String, live: Boolean): View {
+        private fun block(title: String, time: String, live: Boolean, focused: Boolean): View {
             val v = act.vbox()
             v.setPadding(dp(10), dp(6), dp(8), dp(6))
-            v.background = rounded(if (live) Col.SURF2 else Col.SURF, dp(10).toFloat(), if (live) dp(1) else 0, Col.SUBTLE)
+            v.background = when {
+                focused -> rounded(0xFF102A66.toInt(), dp(12).toFloat(), dp(3), Col.ACCENT)
+                live -> rounded(Col.SURF2, dp(12).toFloat(), dp(1), Col.LINE)
+                else -> rounded(Col.SURF, dp(12).toFloat(), dp(1), Col.LINE)
+            }
             v.gravity = android.view.Gravity.CENTER_VERTICAL
             v.addView(act.label(title, 14f, Col.TEXT, live).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END })
-            if (time.isNotEmpty()) v.addView(act.label(time, 11f, Col.MUTED).apply { maxLines = 1 })
+            if (time.isNotEmpty()) v.addView(act.label(time, 11f, if (live) Col.CORAL else Col.MUTED).apply { maxLines = 1 })
             return v
         }
     }
