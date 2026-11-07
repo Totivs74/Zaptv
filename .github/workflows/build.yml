@@ -29,11 +29,18 @@ jobs:
         run: |
           cp app/build/outputs/apk/release/app-release.apk ZapTV.apk
           cp ZapTV.apk tv.apk
+          cp updater/build/outputs/apk/release/updater-release.apk updater.apk
+          CODE=$(grep -oP 'versionCode = \K[0-9]+' app/build.gradle.kts)
+          NAME=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts)
+          echo "{\"versionCode\": $CODE, \"versionName\": \"$NAME\"}" > version.json
+          cat version.json
 
       - uses: actions/upload-artifact@v4
         with:
           name: ZapTV-apk
-          path: ZapTV.apk
+          path: |
+            ZapTV.apk
+            updater.apk
 
       - name: Publish release
         uses: softprops/action-gh-release@v2
@@ -43,4 +50,6 @@ jobs:
           files: |
             ZapTV.apk
             tv.apk
+            updater.apk
+            version.json
           make_latest: true
