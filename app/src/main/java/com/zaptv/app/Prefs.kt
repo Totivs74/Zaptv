@@ -64,6 +64,7 @@ class Prefs(ctx: Context) {
     // Player
     var buffer by IntP("buffer", 1)            // 0 fast, 1 balanced, 2 stable
     var preload by IntP("preload", 1)          // 0 off, 1 light, 2 full
+    var preloadCount by IntP("preload_count", 1) // 0: 1+1, 1: 2+2, 2: 3 ahead+1, 3: 4 ahead+1
     var autoReconnect by Bool("reconnect", true)
     var ffmpegFirst by Bool("ffmpeg_first", false)
     var audioLang by Str("audio_lang", "tr")

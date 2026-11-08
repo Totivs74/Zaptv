@@ -250,13 +250,20 @@ class MainActivity : Activity(), PlayerController.Listener {
         updatePreload(ch)
     }
 
-    /** Preloads 4 channels in the direction you're zapping and 1 behind; flips when you turn around. */
+    /** Preloads neighbours (Settings > Player > Channels to preload); leans toward the zapping direction. */
     private fun updatePreload(ch: Channel) {
         val list = zapList()
         val i = list.indexOfFirst { it.key == ch.key }
         if (i < 0 || list.size < 2) { player.setNeighbours(emptyList(), 0); return }
         val out = ArrayList<Pair<String, Int>>()
-        for (d in listOf(zapDir, -zapDir, 2 * zapDir, 3 * zapDir, 4 * zapDir)) {
+        val z = zapDir
+        val offsets = when (prefs.preloadCount) {
+            0 -> listOf(z, -z)
+            2 -> listOf(z, -z, 2 * z, 3 * z)
+            3 -> listOf(z, -z, 2 * z, 3 * z, 4 * z)
+            else -> listOf(z, -z, 2 * z, -2 * z)
+        }
+        for (d in offsets) {
             val n = list[((i + d) % list.size + list.size) % list.size]
             if (n.key != ch.key && n.cmd.isEmpty() && n.url.isNotEmpty() && out.none { it.first == n.url }) out.add(n.url to i + d)
         }

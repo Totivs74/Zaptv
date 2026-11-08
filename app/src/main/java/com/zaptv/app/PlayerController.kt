@@ -151,6 +151,7 @@ class PlayerController(
                 if (state == Player.STATE_READY) {
                     retries = 0
                     everReady = true
+                    if (preloadPending) { handler.removeCallbacks(startPreloadRunnable); handler.postDelayed(startPreloadRunnable, 700) }
                     gaveUp = false
                     lastMove = now
                     handler.removeCallbacks(startCheck)
@@ -235,7 +236,18 @@ class PlayerController(
         neighbours = list
         neighbourIndex = index
         preloadUntil = System.currentTimeMillis() + PRELOAD_WINDOW_MS
+        // The channel you just picked comes first: neighbours wait until it is actually playing.
+        if (everReady) startPreload() else preloadPending = true
+    }
+
+    private var preloadPending = false
+    private val startPreloadRunnable = Runnable { startPreload() }
+
+    private fun startPreload() {
+        preloadPending = false
+        if (prefs.preload == 0 || neighbours.isEmpty()) return
         refreshNeighbours(fresh = false)
+        handler.removeCallbacks(preloadTick)
         handler.postDelayed(preloadTick, PRELOAD_REFRESH_MS)
     }
 
