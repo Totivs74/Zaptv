@@ -90,8 +90,8 @@ class PlayerController(
     private var preloadManager: DefaultPreloadManager? = null
     private val preloaded = LinkedHashMap<String, MediaItem>()   // url -> item held by the preload manager
     private var inUseItem: MediaItem? = null                     // preloaded item the player is now playing
-    private var neighbourPrev: String? = null
-    private var neighbourNext: String? = null
+    /** Neighbour URLs with their position in the zap list (2 above, 2 below). */
+    private var neighbours: List<Pair<String, Int>> = emptyList()
     private var neighbourIndex = 0
     private var preloadUntil = 0L
     private val preloadTick = object : Runnable {
@@ -125,8 +125,10 @@ class PlayerController(
         val sources = DefaultMediaSourceFactory(ctx)
             .setDataSourceFactory(DefaultDataSource.Factory(ctx, http))
         // Light: neighbours' playlists are fetched and parsed. Full: their first seconds of video too.
-        val target = TargetPreloadStatusControl<Int, DefaultPreloadManager.PreloadStatus> { _ ->
-            if (prefs.preload >= 2) DefaultPreloadManager.PreloadStatus.specifiedRangeLoaded(FULL_PRELOAD_MS)
+        // Full mode downloads the first seconds only for the two closest neighbours; the outer two stay light.
+        val target = TargetPreloadStatusControl<Int, DefaultPreloadManager.PreloadStatus> { rank ->
+            if (prefs.preload >= 2 && kotlin.math.abs(rank - neighbourIndex) <= 1)
+                DefaultPreloadManager.PreloadStatus.specifiedRangeLoaded(FULL_PRELOAD_MS)
             else DefaultPreloadManager.PreloadStatus.PRELOAD_STATUS_SOURCE_PREPARED
         }
         val pmBuilder = DefaultPreloadManager.Builder(ctx, target)
@@ -227,11 +229,10 @@ class PlayerController(
      * Called after each channel change with the previous and next channel in the zapping order
      * (null for channels that need a portal link first). Keeps them preloaded for one minute.
      */
-    fun setNeighbours(prevUrl: String?, nextUrl: String?, index: Int) {
+    fun setNeighbours(list: List<Pair<String, Int>>, index: Int) {
         handler.removeCallbacks(preloadTick)
-        if (prefs.preload == 0 || preloadManager == null) { clearPreload(); return }
-        neighbourPrev = prevUrl
-        neighbourNext = nextUrl
+        if (prefs.preload == 0 || preloadManager == null || list.isEmpty()) { clearPreload(); return }
+        neighbours = list
         neighbourIndex = index
         preloadUntil = System.currentTimeMillis() + PRELOAD_WINDOW_MS
         refreshNeighbours(fresh = false)
@@ -242,8 +243,7 @@ class PlayerController(
     private fun refreshNeighbours(fresh: Boolean = true) {
         val pm = preloadManager ?: return
         val want = LinkedHashMap<String, Int>()
-        neighbourPrev?.let { if (it != url) want[it] = neighbourIndex - 1 }
-        neighbourNext?.let { if (it != url) want[it] = neighbourIndex + 1 }
+        for ((u, rank) in neighbours) if (u != url && u !in want) want[u] = rank
         val iter = preloaded.entries.iterator()
         while (iter.hasNext()) {
             val e = iter.next()
