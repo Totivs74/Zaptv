@@ -225,6 +225,8 @@ class MainActivity : Activity(), PlayerController.Listener {
     // ---------------------------------------------------------------- playback
 
     fun playChannel(ch: Channel, showBanner: Boolean = true) {
+        if (ch.isApp) { app.launchPackage(ch.url.removePrefix("app:")); return }
+        if (ch.isWeather) { openWeather(ch.url.removePrefix("weather:").toIntOrNull() ?: 0); return }
         val cur = current
         if (cur != null && cur.key != ch.key) prefs.prevChannelKey = cur.key
         current = ch

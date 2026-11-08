@@ -14,6 +14,27 @@ class App : Application() {
     lateinit var web: WebServer
     val main = Handler(Looper.getMainLooper())
 
+    /** Installed apps worth launching from ZapTV's Apps tab. */
+    data class LaunchApp(val label: String, val pkg: String)
+    val appsRow: List<LaunchApp> by lazy { discoverApps() }
+
+    private fun discoverApps(): List<App.LaunchApp> {
+        val wanted = listOf(
+            "Ask" to "com.zaptv.ask",
+            "BBC iPlayer" to "bbc.iplayer.android",
+            "ITVX" to "air.ITVMobilePlayer",
+            "YouTube" to "com.google.android.youtube.tv",
+            "Netflix" to "com.netflix.ninja"
+        )
+        return wanted.filter { runCatching { packageManager.getPackageInfo(it.second, 0) }.isSuccess }
+            .map { App.LaunchApp(it.first, it.second) }
+    }
+
+    fun launchPackage(pkg: String) {
+        val i = packageManager.getLeanbackLaunchIntentForPackage(pkg) ?: packageManager.getLaunchIntentForPackage(pkg)
+        if (i != null) runCatching { startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+    }
+
     /** Set by MainActivity; called when the phone page saves a new source. */
     var onSourceSaved: (() -> Unit)? = null
 

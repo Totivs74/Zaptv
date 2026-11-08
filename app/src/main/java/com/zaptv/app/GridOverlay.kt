@@ -95,7 +95,11 @@ class GridOverlay(private val act: MainActivity) : FrameLayout(act) {
         }
         grid.setOnItemClickListener { _, _, pos, _ ->
             val c = items.getOrNull(pos) ?: return@setOnItemClickListener
-            if (c.isWeather) act.openWeather(c.url.removePrefix("weather:").toIntOrNull() ?: 0) else act.playFromGrid(c)
+            when {
+                c.isWeather -> act.openWeather(c.url.removePrefix("weather:").toIntOrNull() ?: 0)
+                c.isApp -> act.app.launchPackage(c.url.removePrefix("app:"))
+                else -> act.playFromGrid(c)
+            }
         }
         grid.setOnItemLongClickListener { _, _, _, _ ->
             if (prefs.keyFor(Action.VOICE) == KeyMap.LONG_OK) { act.doAction(Action.VOICE); true } else false
@@ -199,6 +203,7 @@ class GridOverlay(private val act: MainActivity) : FrameLayout(act) {
                 items.isEmpty() && name == Repo.FAV -> "No favourites yet. Add them from the ▶ menu while watching."
                 items.isEmpty() && name == Repo.RECENT -> "Nothing watched yet"
             name == Repo.WEATHER -> "${items.size} cities. Add more in Settings, Weather cities."
+            name == Repo.APPS -> "Open another app with the remote"
                 else -> "${items.size} channels"
             }
             nowRow.visibility = View.GONE; nextRow.visibility = View.GONE; bar.visibility = View.GONE
@@ -209,7 +214,7 @@ class GridOverlay(private val act: MainActivity) : FrameLayout(act) {
         visibility = View.VISIBLE
         applySettings()
         // Recent and Favourites change while watching: refresh them each time the grid opens.
-        if (group == Repo.RECENT || group == Repo.FAV || group == Repo.WEATHER) {
+        if (group == Repo.RECENT || group == Repo.FAV || group == Repo.WEATHER || group == Repo.APPS) {
             items = repo.channelsFor(group)
             adapter.notifyDataSetChanged()
         }
@@ -259,6 +264,12 @@ class GridOverlay(private val act: MainActivity) : FrameLayout(act) {
 
     private fun showEpg(ch: Channel?) {
         if (ch == null) return
+        if (ch.isApp) {
+            epgName.text = ch.name
+            nowRow.visibility = View.VISIBLE; bar.visibility = View.GONE; nextRow.visibility = View.GONE
+            nowTitle.text = "OK: open ${ch.name}"; nowTime.text = ""
+            return
+        }
         if (ch.isWeather) {
             epgName.text = "${ch.name} weather"
             val city = repo.weather.cities().getOrNull(ch.url.removePrefix("weather:").toIntOrNull() ?: -1)
@@ -322,7 +333,7 @@ class GridOverlay(private val act: MainActivity) : FrameLayout(act) {
         }
 
         fun bind(c: Channel) {
-            num.text = if (c.isWeather) c.badge else c.number.toString()
+            num.text = if (c.isWeather) c.badge else if (c.isApp) "" else c.number.toString()
             initials.text = c.initials
             star.visibility = if (repo.isFav(c)) View.VISIBLE else View.GONE
             Logos.load(c.logo, logo, initials)

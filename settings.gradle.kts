@@ -15,3 +15,4 @@ dependencyResolutionManagement {
 rootProject.name = "ZapTV"
 include(":app")
 include(":updater")
+include(":ask")

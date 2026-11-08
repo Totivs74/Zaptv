@@ -15,6 +15,7 @@ data class Channel(
     var badge: String = ""
 ) {
     val isWeather: Boolean get() = url.startsWith("weather:")
+    val isApp: Boolean get() = url.startsWith("app:")
     val key: String get() = "$name|$group"
     /** Clean label used on tiles when there is no logo: "TR: Kanal D, HD" -> "Kanal D". */
     val initials: String

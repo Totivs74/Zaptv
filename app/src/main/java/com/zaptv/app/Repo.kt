@@ -25,6 +25,7 @@ class Repo(private val app: App) {
         const val RECENT = "Recent"
         const val FAV = "Favourites"
         const val WEATHER = "Weather"
+    const val APPS = "Apps"
         const val ALL = "All"
     }
 
@@ -43,6 +44,7 @@ class Repo(private val app: App) {
         val t = arrayListOf(RECENT, FAV)
         t.addAll(groups())
         if (weather.cities().isNotEmpty()) t.add(WEATHER)
+        if (app.appsRow.isNotEmpty()) t.add(APPS)
         t.add(ALL)
         return t
     }
@@ -56,6 +58,7 @@ class Repo(private val app: App) {
             }
             FAV -> { val f = prefs.favourites; channels.filter { it.key in f } }
             WEATHER -> weather.cityChannels()
+            APPS -> app.appsRow.map { Channel(name = it.label, group = APPS, logo = "", url = "app:" + it.pkg, tvgId = "") }
             ALL -> channels.filter { it.group !in hidden }
             else -> channels.filter { it.group == group }
         }
