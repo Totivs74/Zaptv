@@ -132,7 +132,7 @@ class UpdaterActivity : Activity() {
     }
 
     private fun check() {
-        latest.text = "Checking GitHub…"
+        latest.text = "Checking GitHub (will retry if busy)…"
         io.execute {
             val r = runCatching {
                 val js = JSONObject(Installer.open(Installer.VERSION_URL).inputStream.use { it.readBytes().toString(Charsets.UTF_8) })
@@ -145,7 +145,7 @@ class UpdaterActivity : Activity() {
                     latest.text = "Latest on GitHub: $name" + if (code > have) "  (new)" else "  (you're up to date)"
                     latest.setTextColor(if (code > have) CORAL else TEXT)
                     updateButton()
-                }.onFailure { latest.text = "Couldn't reach GitHub. Check the internet connection." }
+                }.onFailure { latest.text = "GitHub is busy right now. Press Check again in a moment." }
             }
         }
     }

@@ -25,7 +25,21 @@ object Installer {
     private val main = Handler(Looper.getMainLooper())
     fun say(msg: String) = main.post { listener?.invoke(msg) }
 
+    /** Open with retries: GitHub's release CDN intermittently returns 500/502/503/504. */
     fun open(url: String): HttpURLConnection {
+        var lastError: Exception? = null
+        repeat(5) { attempt ->
+            try {
+                return openOnce(url)
+            } catch (e: Exception) {
+                lastError = e
+                try { Thread.sleep(700L + attempt * 800L) } catch (_: InterruptedException) {}
+            }
+        }
+        throw lastError ?: java.io.IOException("Couldn't reach GitHub")
+    }
+
+    private fun openOnce(url: String): HttpURLConnection {
         var current = url
         repeat(6) {
             val c = URL(current).openConnection() as HttpURLConnection
@@ -37,6 +51,8 @@ object Installer {
             if (code in 300..399) {
                 current = URL(URL(current), c.getHeaderField("Location")).toString()
                 c.disconnect()
+            } else if (code >= 500) {
+                c.disconnect(); throw java.io.IOException("GitHub busy ($code)")
             } else if (code >= 400) {
                 c.disconnect(); throw IllegalStateException("Server answered $code")
             } else return c
