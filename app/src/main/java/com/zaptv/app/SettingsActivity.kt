@@ -140,7 +140,7 @@ class SettingsActivity : Activity() {
             Row("Buffer", { listOf("Fast zapping", "Balanced", "Stable")[prefs.buffer.coerceIn(0, 2)] }, "Smaller buffer switches faster; larger one survives weak connections") {
                 prefs.buffer = (prefs.buffer + 1) % 3
             },
-            Row("Preload next channels", { listOf("Off", "Light", "Full")[prefs.preload.coerceIn(0, 2)] }, "Prepares 2 channels above and 2 below for 1 minute after you zap. Full also downloads the first seconds of the closest two") {
+            Row("Preload next channels", { listOf("Off", "Light", "Full")[prefs.preload.coerceIn(0, 2)] }, "Prepares 4 channels in the direction you zap and 1 behind, for 1 minute. Full also downloads the first seconds of the closest two") {
                 prefs.preload = (prefs.preload + 1) % 3
             },
             Row("Auto-reconnect if stream drops", { onOff(prefs.autoReconnect) }, toggle = true) { prefs.autoReconnect = !prefs.autoReconnect },

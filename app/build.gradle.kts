@@ -11,8 +11,8 @@ android {
         applicationId = "com.zaptv.app"
         minSdk = 23
         targetSdk = 34
-        versionCode = 5
-        versionName = "1.3.1"
+        versionCode = 6
+        versionName = "1.3.2"
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")
         }

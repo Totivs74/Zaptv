@@ -52,6 +52,8 @@ class MainActivity : Activity(), PlayerController.Listener {
     private var lastBack = 0L
     private var numBuf = ""
     private var zapTarget: Channel? = null
+    /** +1 when zapping up the list, -1 when zapping down. Preloading leans this way. */
+    private var zapDir = 1
     private val links = Executors.newSingleThreadExecutor()
 
     private val hideStatus = Runnable { statusView.visibility = View.GONE }
@@ -248,13 +250,13 @@ class MainActivity : Activity(), PlayerController.Listener {
         updatePreload(ch)
     }
 
-    /** Hands the player the 2 channels above and 2 below this one so they can be preloaded. */
+    /** Preloads 4 channels in the direction you're zapping and 1 behind; flips when you turn around. */
     private fun updatePreload(ch: Channel) {
         val list = zapList()
         val i = list.indexOfFirst { it.key == ch.key }
         if (i < 0 || list.size < 2) { player.setNeighbours(emptyList(), 0); return }
         val out = ArrayList<Pair<String, Int>>()
-        for (d in listOf(-1, 1, -2, 2)) {
+        for (d in listOf(zapDir, -zapDir, 2 * zapDir, 3 * zapDir, 4 * zapDir)) {
             val n = list[((i + d) % list.size + list.size) % list.size]
             if (n.key != ch.key && n.cmd.isEmpty() && n.url.isNotEmpty() && out.none { it.first == n.url }) out.add(n.url to i + d)
         }
@@ -275,6 +277,7 @@ class MainActivity : Activity(), PlayerController.Listener {
 
     /** Up/Down zapping: the banner follows instantly, the stream starts when you stop pressing. */
     private fun zap(step: Int) {
+        zapDir = if (step >= 0) 1 else -1
         val list = zapList()
         if (list.isEmpty()) return
         val from = zapTarget ?: current
