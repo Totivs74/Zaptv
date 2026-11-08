@@ -17,8 +17,14 @@ import java.net.URL
 object Installer {
     const val ZAPTV_PACKAGE = "com.zaptv.app"
     const val REPO = "Totivs74/Zaptv"
-    const val APK_URL = "https://github.com/$REPO/releases/latest/download/tv.apk"
-    const val VERSION_URL = "https://github.com/$REPO/releases/latest/download/version.json"
+    // Served from raw.githubusercontent.com (dist branch): one stable host that this network can reach,
+    // unlike the release-asset host which intermittently 504s / is blocked on some TV networks.
+    private const val RAW = "https://raw.githubusercontent.com/$REPO/dist"
+    const val APK_URL = "$RAW/tv.apk"
+    const val VERSION_URL = "$RAW/version.json"
+    // Release-asset link kept only as a last-resort fallback.
+    const val APK_URL_FALLBACK = "https://github.com/$REPO/releases/latest/download/tv.apk"
+    const val VERSION_URL_FALLBACK = "https://github.com/$REPO/releases/latest/download/version.json"
 
     /** Set by the activity to show progress / results on screen. */
     @Volatile var listener: ((String) -> Unit)? = null

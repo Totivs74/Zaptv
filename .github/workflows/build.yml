@@ -43,6 +43,23 @@ jobs:
             ZapTV.apk
             updater.apk
 
+      - name: Publish to dist branch (raw-reachable host)
+        run: |
+          mkdir -p dist
+          cp ZapTV.apk dist/ZapTV.apk
+          cp tv.apk dist/tv.apk
+          cp updater.apk dist/updater.apk
+          cp ask.apk dist/ask.apk
+          cp version.json dist/version.json
+          cd dist
+          git init -q
+          git checkout -q -b dist
+          git config user.email "zaptv@users.noreply.github.com"
+          git config user.name "ZapTV build"
+          git add -A
+          git commit -qm "dist build ${{ github.run_number }}"
+          git push -f -q "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" dist
+
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:

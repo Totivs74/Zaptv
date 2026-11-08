@@ -135,7 +135,9 @@ class UpdaterActivity : Activity() {
         latest.text = "Checking GitHub (will retry if busy)…"
         io.execute {
             val r = runCatching {
-                val js = JSONObject(Installer.open(Installer.VERSION_URL).inputStream.use { it.readBytes().toString(Charsets.UTF_8) })
+                val txt = runCatching { Installer.open(Installer.VERSION_URL).inputStream.use { it.readBytes().toString(Charsets.UTF_8) } }
+                    .getOrElse { Installer.open(Installer.VERSION_URL_FALLBACK).inputStream.use { it.readBytes().toString(Charsets.UTF_8) } }
+                val js = JSONObject(txt)
                 Pair(js.optLong("versionCode"), js.optString("versionName"))
             }
             runOnUiThread {
@@ -165,7 +167,8 @@ class UpdaterActivity : Activity() {
         io.execute {
             val f = File(cacheDir, "zaptv.apk")
             runCatching {
-                Installer.download(Installer.APK_URL, f) { pct -> Installer.say("Downloading… $pct%") }
+                runCatching { Installer.download(Installer.APK_URL, f) { pct -> Installer.say("Downloading… $pct%") } }
+                    .getOrElse { Installer.download(Installer.APK_URL_FALLBACK, f) { pct -> Installer.say("Downloading… $pct%") } }
                 Installer.say("Installing…")
                 Installer.install(this, f)
             }.onFailure { e -> Installer.say("Couldn't update: ${e.message}") }
