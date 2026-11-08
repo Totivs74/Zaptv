@@ -245,6 +245,21 @@ class MainActivity : Activity(), PlayerController.Listener {
             player.play(ch.url)
         }
         if (showBanner && prefs.bannerSec > 0) banner.show(ch)
+        updatePreload(ch)
+    }
+
+    /** Hands the player the channels above and below this one so they can be preloaded. */
+    private fun updatePreload(ch: Channel) {
+        val list = zapList()
+        val i = list.indexOfFirst { it.key == ch.key }
+        if (i < 0 || list.size < 2) { player.setNeighbours(null, null, 0); return }
+        val prev = list[(i - 1 + list.size) % list.size]
+        val next = list[(i + 1) % list.size]
+        player.setNeighbours(
+            prev.url.takeIf { prev.cmd.isEmpty() && it.isNotEmpty() },
+            next.url.takeIf { next.cmd.isEmpty() && it.isNotEmpty() },
+            i
+        )
     }
 
     private fun zapList(): List<Channel> {

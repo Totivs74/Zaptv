@@ -140,6 +140,9 @@ class SettingsActivity : Activity() {
             Row("Buffer", { listOf("Fast zapping", "Balanced", "Stable")[prefs.buffer.coerceIn(0, 2)] }, "Smaller buffer switches faster; larger one survives weak connections") {
                 prefs.buffer = (prefs.buffer + 1) % 3
             },
+            Row("Preload next channels", { listOf("Off", "Light", "Full")[prefs.preload.coerceIn(0, 2)] }, "Prepares the channels above and below for 1 minute after you zap. Full also downloads their first seconds") {
+                prefs.preload = (prefs.preload + 1) % 3
+            },
             Row("Auto-reconnect if stream drops", { onOff(prefs.autoReconnect) }, toggle = true) { prefs.autoReconnect = !prefs.autoReconnect },
             Row("Audio decoder", { if (prefs.ffmpegFirst) "FFmpeg first" else "Hardware first" }, "Use FFmpeg first if some channels play without sound") {
                 prefs.ffmpegFirst = !prefs.ffmpegFirst

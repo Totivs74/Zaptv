@@ -20,6 +20,8 @@ import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.exoplayer.source.preload.DefaultPreloadManager
+import androidx.media3.exoplayer.source.preload.TargetPreloadStatusControl
 import java.util.Locale
 
 /** Wraps Media3 ExoPlayer: fast start, auto-reconnect, track switching. */
@@ -48,6 +50,12 @@ class PlayerController(
         private const val FREEZE_MS = 6000L
         private const val STUCK_BUFFER_MS = 10000L
         private const val MAX_START_ATTEMPTS = 4
+        /** Neighbours stay preloaded this long after the last channel change. */
+        private const val PRELOAD_WINDOW_MS = 60_000L
+        /** Live streams move on, so neighbours are re-fetched this often while the window is open. */
+        private const val PRELOAD_REFRESH_MS = 10_000L
+        /** Full mode: how much of each neighbour to download ahead. */
+        private const val FULL_PRELOAD_MS = 3_000L
     }
 
     var listener: Listener? = null
@@ -78,6 +86,22 @@ class PlayerController(
 
     val isActive: Boolean get() = player != null
 
+    // ---------- Neighbour preloading (Settings > Playback > Preload next channels) ----------
+    private var preloadManager: DefaultPreloadManager? = null
+    private val preloaded = LinkedHashMap<String, MediaItem>()   // url -> item held by the preload manager
+    private var inUseItem: MediaItem? = null                     // preloaded item the player is now playing
+    private var neighbourPrev: String? = null
+    private var neighbourNext: String? = null
+    private var neighbourIndex = 0
+    private var preloadUntil = 0L
+    private val preloadTick = object : Runnable {
+        override fun run() {
+            if (System.currentTimeMillis() >= preloadUntil || prefs.preload == 0) { clearPreload(); return }
+            refreshNeighbours()
+            handler.postDelayed(this, PRELOAD_REFRESH_MS)
+        }
+    }
+
     private fun build(): ExoPlayer {
         val (minMs, maxMs, playMs, rebufMs) = when (prefs.buffer) {
             0 -> listOf(2000, 20000, 500, 1000)
@@ -100,10 +124,17 @@ class PlayerController(
             .setReadTimeoutMs(15000)
         val sources = DefaultMediaSourceFactory(ctx)
             .setDataSourceFactory(DefaultDataSource.Factory(ctx, http))
-        val p = ExoPlayer.Builder(ctx, renderers)
-            .setLoadControl(load)
+        // Light: neighbours' playlists are fetched and parsed. Full: their first seconds of video too.
+        val target = TargetPreloadStatusControl<Int, DefaultPreloadManager.PreloadStatus> { _ ->
+            if (prefs.preload >= 2) DefaultPreloadManager.PreloadStatus.specifiedRangeLoaded(FULL_PRELOAD_MS)
+            else DefaultPreloadManager.PreloadStatus.PRELOAD_STATUS_SOURCE_PREPARED
+        }
+        val pmBuilder = DefaultPreloadManager.Builder(ctx, target)
             .setMediaSourceFactory(sources)
-            .build()
+            .setRenderersFactory(renderers)
+            .setLoadControl(load)
+        val p = pmBuilder.buildExoPlayer(ExoPlayer.Builder(ctx))
+        preloadManager = pmBuilder.build()
         val b = p.trackSelectionParameters.buildUpon()
             .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, !prefs.subtitles)
         if (prefs.audioLang.isNotEmpty()) b.setPreferredAudioLanguage(prefs.audioLang)
@@ -164,15 +195,75 @@ class PlayerController(
         url = u
         subs.text = ""
         val p = ensure()
-        val item = MediaItem.Builder().setUri(u)
-        val lower = u.lowercase(Locale.ROOT)
-        if (lower.contains(".m3u8") || lower.contains("m3u8")) item.setMimeType(MimeTypes.APPLICATION_M3U8)
-        p.setMediaItem(item.build())
+        val item = itemFor(u)
+        val previousInUse = inUseItem
+        inUseItem = null
+        // Reloading the same channel always starts a fresh source.
+        val ready = if (prefs.preload > 0 && previousInUse?.mediaId != u) preloadManager?.getMediaSource(item) else null
+        if (ready != null) {
+            preloaded.remove(u)
+            inUseItem = item
+            p.setMediaSource(ready)
+        } else {
+            p.setMediaItem(item)
+        }
         p.prepare()
         p.play()
+        // A preloaded source is used once; drop the one we just left so it gets re-fetched fresh if needed.
+        if (previousInUse != null) preloadManager?.remove(previousInUse)
         handler.postDelayed(startCheck, START_TIMEOUT_MS)
         handler.removeCallbacks(watchdog)
         handler.postDelayed(watchdog, 2000)
+    }
+
+    private fun itemFor(u: String): MediaItem {
+        val item = MediaItem.Builder().setUri(u).setMediaId(u)
+        val lower = u.lowercase(Locale.ROOT)
+        if (lower.contains("m3u8")) item.setMimeType(MimeTypes.APPLICATION_M3U8)
+        return item.build()
+    }
+
+    /**
+     * Called after each channel change with the previous and next channel in the zapping order
+     * (null for channels that need a portal link first). Keeps them preloaded for one minute.
+     */
+    fun setNeighbours(prevUrl: String?, nextUrl: String?, index: Int) {
+        handler.removeCallbacks(preloadTick)
+        if (prefs.preload == 0 || preloadManager == null) { clearPreload(); return }
+        neighbourPrev = prevUrl
+        neighbourNext = nextUrl
+        neighbourIndex = index
+        preloadUntil = System.currentTimeMillis() + PRELOAD_WINDOW_MS
+        refreshNeighbours(fresh = false)
+        handler.postDelayed(preloadTick, PRELOAD_REFRESH_MS)
+    }
+
+    /** Re-fetches the neighbours so a live channel starts close to live, not from an old preload. */
+    private fun refreshNeighbours(fresh: Boolean = true) {
+        val pm = preloadManager ?: return
+        val want = LinkedHashMap<String, Int>()
+        neighbourPrev?.let { if (it != url) want[it] = neighbourIndex - 1 }
+        neighbourNext?.let { if (it != url) want[it] = neighbourIndex + 1 }
+        val iter = preloaded.entries.iterator()
+        while (iter.hasNext()) {
+            val e = iter.next()
+            if (fresh || e.key !in want) { pm.remove(e.value); iter.remove() }
+        }
+        for ((u, rank) in want) {
+            if (u in preloaded) continue
+            val item = itemFor(u)
+            pm.add(item, rank)
+            preloaded[u] = item
+        }
+        pm.setCurrentPlayingIndex(neighbourIndex)
+        pm.invalidate()
+    }
+
+    private fun clearPreload() {
+        handler.removeCallbacks(preloadTick)
+        val pm = preloadManager
+        if (pm != null) for (item in preloaded.values) pm.remove(item)
+        preloaded.clear()
     }
 
     private fun scheduleRetry() {
@@ -248,8 +339,13 @@ class PlayerController(
         handler.removeCallbacks(retry)
         handler.removeCallbacks(startCheck)
         handler.removeCallbacks(watchdog)
+        handler.removeCallbacks(preloadTick)
+        preloaded.clear()
+        inUseItem = null
         player?.release()
         player = null
+        preloadManager?.release()
+        preloadManager = null
     }
 
     fun resume(): Boolean {
