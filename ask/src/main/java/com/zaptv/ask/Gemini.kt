@@ -11,13 +11,33 @@ import org.json.JSONObject
  */
 class Gemini(private val key: String) {
     private val base = "https://generativelanguage.googleapis.com/v1beta/models"
-    private val textModel = "gemini-2.5-flash"
-    private val imageModel = "gemini-2.5-flash-image"
+    // Aliases that always point to the current model, so a retired version never breaks the app.
+    private val textModel = "gemini-flash-latest"
+    private val textFallbacks = listOf("gemini-3.5-flash", "gemini-3.1-flash-lite", "gemini-2.5-flash")
+    private val imageModel = "gemini-3.1-flash-image"
+    private val imageFallbacks = listOf("gemini-2.5-flash-image")
 
     private fun headers() = mapOf("Content-Type" to "application/json", "x-goog-api-key" to key)
 
-    private fun generate(model: String, bodyJson: JSONObject): JSONObject =
-        JSONObject(Net.text("$base/$model:generateContent", headers(), "POST", bodyJson.toString().toByteArray()))
+    private fun generate(model: String, bodyJson: JSONObject): JSONObject {
+        val chain = listOf(model) + when (model) {
+            textModel -> textFallbacks
+            imageModel -> imageFallbacks
+            else -> emptyList()
+        }
+        var last: Exception? = null
+        for (m in chain) {
+            try {
+                return JSONObject(Net.text("$base/$m:generateContent", headers(), "POST", bodyJson.toString().toByteArray()))
+            } catch (e: Exception) {
+                last = e
+                val msg = e.message ?: ""
+                val retryable = msg.contains("404") || msg.contains("no longer available") || msg.contains("not found", true)
+                if (!retryable) throw e
+            }
+        }
+        throw last ?: IllegalStateException("No model available")
+    }
 
     private fun textPart(s: String) = JSONObject().put("text", s)
     private fun userContent(s: String) = JSONArray().put(JSONObject().put("role", "user").put("parts", JSONArray().put(textPart(s))))
