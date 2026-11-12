@@ -25,50 +25,18 @@ jobs:
       - name: Build
         run: gradle assembleRelease --no-daemon --stacktrace
 
+      # Test branch: builds ONLY the separate "ZapTV TR" test app as a pre-release.
+      # It never touches the dist branch or the "latest" release the Updater uses.
       - name: Rename APK
-        run: |
-          cp app/build/outputs/apk/release/app-release.apk ZapTV.apk
-          cp ZapTV.apk tv.apk
-          cp updater/build/outputs/apk/release/updater-release.apk updater.apk
-          cp ask/build/outputs/apk/release/ask-release.apk ask.apk
-          CODE=$(grep -oP 'versionCode = \K[0-9]+' app/build.gradle.kts)
-          NAME=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts)
-          echo "{\"versionCode\": $CODE, \"versionName\": \"$NAME\"}" > version.json
-          cat version.json
+        run: cp app/build/outputs/apk/release/app-release.apk ZapTV-TR.apk
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ZapTV-apk
-          path: |
-            ZapTV.apk
-            updater.apk
-
-      - name: Publish to dist branch (raw-reachable host)
-        run: |
-          mkdir -p dist
-          cp ZapTV.apk dist/ZapTV.apk
-          cp tv.apk dist/tv.apk
-          cp updater.apk dist/updater.apk
-          cp ask.apk dist/ask.apk
-          cp version.json dist/version.json
-          cd dist
-          git init -q
-          git checkout -q -b dist
-          git config user.email "zaptv@users.noreply.github.com"
-          git config user.name "ZapTV build"
-          git add -A
-          git commit -qm "dist build ${{ github.run_number }}"
-          git push -f -q "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" dist
-
-      - name: Publish release
+      - name: Publish test pre-release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: build-${{ github.run_number }}
-          name: ZapTV build ${{ github.run_number }}
-          files: |
-            ZapTV.apk
-            tv.apk
-            updater.apk
-            ask.apk
-            version.json
-          make_latest: true
+          tag_name: tr-test-${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
+          name: ZapTV TR test ${{ github.run_number }}
+          body: Test build with the Turkey connection. Installs next to ZapTV as "ZapTV TR". Install it with the ZapTV Updater's upload page.
+          files: ZapTV-TR.apk
+          prerelease: true
+          make_latest: false

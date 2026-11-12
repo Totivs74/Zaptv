@@ -16,6 +16,7 @@ class MainActivity : Activity(), PlayerController.Listener {
     companion object {
         const val REQ_MIC = 7
         const val REQ_VOICE = 8
+        const val REQ_VPN = 9
     }
 
     private enum class Mode { PLAYER, GRID, GUIDE, OPTIONS, SETUP, WEATHER }
@@ -132,13 +133,15 @@ class MainActivity : Activity(), PlayerController.Listener {
             } else if (!repo.hasPlaylists()) showSetup(null)
             if (repo.missingCache()) backgroundRefresh()
         }
-        if (started && !player.isActive) player.resume()
+        if (started && !player.isActive) routeFor(current) { player.resume() }
     }
 
     override fun onStop() {
         // Free the decoder and network while another app (or Settings) is in front.
         player.release()
         voice.close()
+        // Close the Turkey connection while ZapTV is not on screen; it reopens on the next TR channel.
+        if (app.trVpn.isUp || app.trVpn.desired) app.trVpn.ensure(false) { _, _ -> }
         super.onStop()
     }
 
@@ -154,7 +157,7 @@ class MainActivity : Activity(), PlayerController.Listener {
 
     private fun startup() {
         // Fastest path: start the last stream immediately, before the playlist is even read.
-        if (prefs.openWithLast && prefs.lastUrl.isNotEmpty() && prefs.sourceType != "stalker") {
+        if (prefs.openWithLast && prefs.lastUrl.isNotEmpty() && prefs.sourceType != "stalker" && !needsTr(prefs.lastChannelKey)) {
             player.play(prefs.lastUrl)
             started = true
         }
@@ -233,6 +236,12 @@ class MainActivity : Activity(), PlayerController.Listener {
         prefs.lastChannelKey = ch.key
         prefs.addRecent(ch.key)
         started = true
+        routeFor(ch) { startStream(ch) }
+        if (showBanner && prefs.bannerSec > 0) banner.show(ch)
+        updatePreload(ch)
+    }
+
+    private fun startStream(ch: Channel) {
         if (ch.cmd.isNotEmpty()) {
             prefs.lastUrl = ""
             status("Connecting…", sticky = true)
@@ -248,15 +257,57 @@ class MainActivity : Activity(), PlayerController.Listener {
             prefs.lastUrl = ch.url
             player.play(ch.url)
         }
-        if (showBanner && prefs.bannerSec > 0) banner.show(ch)
-        updatePreload(ch)
+    }
+
+    // ---------------------------------------------------------------- Turkey connection
+
+    private var pendingTr: Channel? = null
+
+    fun needsTr(key: String?): Boolean = key != null && app.trVpn.configured && prefs.isTr(key)
+
+    /**
+     * Opens the Turkey connection for TR channels and closes it for all others, then runs [then].
+     * Channels without TR never wait: when the connection is already closed nothing happens.
+     */
+    private fun routeFor(ch: Channel?, then: () -> Unit) {
+        val vpn = app.trVpn
+        val want = ch != null && needsTr(ch.key)
+        if (!want && !vpn.isUp && !vpn.desired) { then(); return }
+        if (want && vpn.isUp && vpn.desired) { then(); return }
+        if (want) {
+            val ask = vpn.permissionIntent()
+            if (ask != null) {
+                pendingTr = ch
+                status("Allow the Turkey connection on the next screen", sticky = true)
+                runCatching { startActivityForResult(ask, REQ_VPN) }.onFailure { status("This TV can't open the VPN permission screen") }
+                return
+            }
+            status("Connecting via Turkey…", sticky = true)
+        }
+        player.stop()
+        vpn.ensure(want) { ok, err ->
+            app.main.post {
+                if (current !== ch) return@post
+                if (want && !ok) status("Turkey connection failed${err?.let { ": $it" } ?: ""}") else clearStatus()
+                then()
+            }
+        }
+    }
+
+    /** Options > Turkey connection: marks or unmarks the current channel and replays it. */
+    fun toggleTrForCurrent() {
+        val ch = current ?: return
+        if (!app.trVpn.configured) { status("Add the Turkey file on the phone page first"); return }
+        prefs.toggleTr(ch.key)
+        status(if (prefs.isTr(ch.key)) "${ch.name}: Turkey connection on" else "${ch.name}: Turkey connection off")
+        playChannel(ch, showBanner = false)
     }
 
     /** Preloads neighbours (Settings > Player > Channels to preload); leans toward the zapping direction. */
     private fun updatePreload(ch: Channel) {
         val list = zapList()
         val i = list.indexOfFirst { it.key == ch.key }
-        if (i < 0 || list.size < 2) { player.setNeighbours(emptyList(), 0); return }
+        if (i < 0 || list.size < 2 || needsTr(ch.key)) { player.setNeighbours(emptyList(), 0); return }
         val out = ArrayList<Pair<String, Int>>()
         val z = zapDir
         val offsets = when (prefs.preloadCount) {
@@ -267,7 +318,7 @@ class MainActivity : Activity(), PlayerController.Listener {
         }
         for (d in offsets) {
             val n = list[((i + d) % list.size + list.size) % list.size]
-            if (n.key != ch.key && n.cmd.isEmpty() && n.url.isNotEmpty() && out.none { it.first == n.url }) out.add(n.url to i + d)
+            if (n.key != ch.key && n.cmd.isEmpty() && n.url.isNotEmpty() && !needsTr(n.key) && out.none { it.first == n.url }) out.add(n.url to i + d)
         }
         player.setNeighbours(out, i)
     }
@@ -605,6 +656,13 @@ class MainActivity : Activity(), PlayerController.Listener {
     @Deprecated("Deprecated in Java")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQ_VPN) {
+            val ch = pendingTr
+            pendingTr = null
+            if (resultCode == RESULT_OK && ch != null && current === ch) playChannel(ch, showBanner = false)
+            else if (resultCode != RESULT_OK) status("Turkey connection was not allowed")
+            return
+        }
         if (requestCode == REQ_VOICE && resultCode == RESULT_OK) {
             voice.handle(data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS) ?: arrayListOf())
         }

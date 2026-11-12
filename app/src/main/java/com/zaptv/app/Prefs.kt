@@ -83,6 +83,19 @@ class Prefs(ctx: Context) {
         get() = p.getStringSet("favs", emptySet())?.toSet() ?: emptySet()
         set(v) = p.edit().putStringSet("favs", v).apply()
 
+    /** Channels that play through the Turkey connection. */
+    var trChannels: Set<String>
+        get() = p.getStringSet("tr_channels", emptySet())?.toSet() ?: emptySet()
+        set(v) = p.edit().putStringSet("tr_channels", v).apply()
+
+    fun isTr(key: String) = key in trChannels
+
+    fun toggleTr(key: String) {
+        val s = trChannels.toMutableSet()
+        if (!s.add(key)) s.remove(key)
+        trChannels = s
+    }
+
     /** Last watched channels, newest first (max 10). */
     var recent: List<String>
         get() = (p.getString("recent", "") ?: "").split('\n').filter { it.isNotEmpty() }

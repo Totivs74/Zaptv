@@ -74,6 +74,10 @@ class WebServer(private val app: App) {
                 val form = parseForm(String(body, 0, read, Charsets.UTF_8))
                 respond(sock, 200, "text/html; charset=utf-8", page(save(form)))
             }
+            method == "POST" && path in setOf("/vpn_conf", "/vpn_remove", "/tr_remove") -> {
+                val form = parseForm(String(body, 0, read, Charsets.UTF_8))
+                respond(sock, 200, "text/html; charset=utf-8", page(vpnAction(path, form)))
+            }
             method == "POST" && path in setOf("/toggle", "/delete", "/city", "/city_delete") -> {
                 val form = parseForm(String(body, 0, read, Charsets.UTF_8))
                 respond(sock, 200, "text/html; charset=utf-8", page(action(path, form)))
@@ -119,6 +123,34 @@ class WebServer(private val app: App) {
         store.add(p)
         changed()
         return "Added \"$name\". Your TV is loading its channels now."
+    }
+
+    private fun vpnAction(path: String, f: Map<String, String>): String {
+        val vpn = app.trVpn
+        return when (path) {
+            "/vpn_conf" -> vpn.saveConfig(f["conf"].orEmpty().trim()) ?: "Turkey file saved. In ZapTV, open Options on a channel and set Turkey connection to On."
+            "/vpn_remove" -> { vpn.removeConfig(); "Turkey file removed." }
+            "/tr_remove" -> {
+                val k = f["key"].orEmpty()
+                app.prefs.trChannels = app.prefs.trChannels - k
+                "Channel set back to the normal connection."
+            }
+            else -> ""
+        }
+    }
+
+    private fun trSection(): String {
+        val vpn = app.trVpn
+        val chans = app.prefs.trChannels.mapNotNull { k -> app.repo.byKey(k)?.let { k to it.name } }.sortedBy { it.second }
+        val list = if (chans.isEmpty()) "<p class=\"s\">No channels use it yet. On the TV: Options on a channel, then Turkey connection.</p>" else chans.joinToString("") { (k, n) ->
+            """<div class="pl"><div><b>${esc(n)}</b><small>Turkey connection</small></div><form method="post" action="/tr_remove"><input type="hidden" name="key" value="${esc(k)}"><button class="del" type="submit">Remove</button></form></div>"""
+        }
+        val state = if (vpn.configured) "<div class=\"pl\"><div><b>Turkey file loaded</b><small>Only ZapTV uses it, and only on the channels below</small></div><form method=\"post\" action=\"/vpn_remove\" onsubmit=\"return confirm('Remove the Turkey file?')\"><button class=\"del\" type=\"submit\">Remove</button></form></div>"
+            else "<p class=\"s\">No Turkey file yet.</p>"
+        return """<h2>Turkey connection</h2>$state
+<form method="post" action="/vpn_conf"><label class="f" for="vpn_file">${if (vpn.configured) "Replace" else "Upload"} the WireGuard file (.conf)</label><input type="file" id="vpn_file" accept=".conf,text/plain">
+<textarea id="vpn_conf" name="conf" style="display:none"></textarea><small id="vpn_note"></small><button type="submit">Save Turkey file</button></form>
+<h2 style="font-size:16px">Channels using it</h2>$list"""
     }
 
     private fun action(path: String, f: Map<String, String>): String {
@@ -214,10 +246,12 @@ textarea{min-height:110px}button{width:100%;padding:14px;border:0;border-radius:
 <label class="f" for="mac">MAC address (from your provider)</label><input type="text" id="mac" name="mac" placeholder="00:1A:79:XX:XX:XX" autocapitalize="characters"></fieldset>
 <label class="f" for="epg_url">EPG link (optional)</label><input type="url" id="epg_url" name="epg_url" placeholder="Leave empty to use the one in the playlist">
 <button type="submit">Add playlist</button></form>
+${trSection()}
 <h2>Weather cities</h2>$cityRows
 <form method="post" action="/city" class="row"><input type="text" name="city" placeholder="Add a city, e.g. Antalya" aria-label="City name"><button type="submit">Add</button></form>
 <p class="s" style="margin-top:22px">ZapTV, created by Bulent Cansever.</p></main>
 <script>document.getElementById('m3u_file').addEventListener('change',function(e){var f=e.target.files[0];if(!f)return;var r=new FileReader();r.onload=function(){var t=String(r.result);document.getElementById('m3u_text').value=t;document.getElementById('m3u_url').value='';var n=(t.match(/#EXTINF/g)||[]).length;var l=(t.match(/tvg-logo="[^"]+"/g)||[]).length;document.getElementById('file_note').textContent='Loaded '+f.name+': '+n+' channels, '+l+' with a logo.';var nm=document.getElementById('name');if(!nm.value)nm.value=f.name.replace(/\.[^.]+$/,'')};r.readAsText(f)});
+document.getElementById('vpn_file').addEventListener('change',function(e){var f=e.target.files[0];if(!f)return;var r=new FileReader();r.onload=function(){document.getElementById('vpn_conf').value=String(r.result);document.getElementById('vpn_note').textContent='Loaded '+f.name+'. Press Save.'};r.readAsText(f)});
 function sw(){var v=document.querySelector('input[name=type]:checked').value;['m3u','xtream','stalker'].forEach(function(id){document.getElementById(id).className=id==v?'on':''})}sw()</script>
 </body></html>"""
     }

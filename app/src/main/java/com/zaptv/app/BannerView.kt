@@ -49,7 +49,7 @@ class BannerView(private val act: MainActivity) : FrameLayout(act) {
     }
 
     fun show(ch: Channel, sticky: Boolean = false) {
-        title.text = "${ch.number}  ${ch.name}"
+        title.text = "${ch.number}  ${ch.name}" + if ((context as? MainActivity)?.needsTr(ch.key) == true) "   · TR" else ""
         initials.text = ch.initials
         Logos.load(ch.logo, logo, initials)
         val t = System.currentTimeMillis()

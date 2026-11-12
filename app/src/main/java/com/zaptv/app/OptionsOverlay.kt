@@ -13,6 +13,7 @@ class OptionsOverlay(private val act: MainActivity) : FrameLayout(act) {
     private val subsVal = act.label("", 15f)
     private val picVal = act.label("", 15f)
     private val favVal = act.label("", 15f)
+    private val trVal = act.label("", 15f)
     private val firstRow: View
 
     init {
@@ -23,6 +24,7 @@ class OptionsOverlay(private val act: MainActivity) : FrameLayout(act) {
         row("Subtitles", subsVal) { cycleSubs() }
         row("Picture", picVal) { cyclePicture() }
         row("Favourite", favVal) { act.doAction(Action.FAVOURITE) }
+        row("Turkey connection", trVal) { act.toggleTrForCurrent() }
         panel.addView(act.label("OK: change     Back: close", 12f, Col.MUTED), lp(WRAP, WRAP).apply { topMargin = dp(10) })
         addView(panel, LayoutParams(dp(380), WRAP, Gravity.END or Gravity.CENTER_VERTICAL).apply { rightMargin = dp(28) })
         visibility = View.GONE
@@ -67,6 +69,11 @@ class OptionsOverlay(private val act: MainActivity) : FrameLayout(act) {
         }
         picVal.text = listOf("Fit", "Fill", "Zoom")[act.app.prefs.resizeMode.coerceIn(0, 2)]
         favVal.text = act.currentChannel()?.let { if (act.app.repo.isFav(it)) "Yes ★" else "No" } ?: "-"
+        trVal.text = when {
+            !act.app.trVpn.configured -> "No file yet"
+            act.currentChannel()?.let { act.app.prefs.isTr(it.key) } == true -> "On"
+            else -> "Off"
+        }
     }
 
     private fun cycleAudio() {

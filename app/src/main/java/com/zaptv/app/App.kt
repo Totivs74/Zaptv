@@ -12,6 +12,7 @@ class App : Application() {
     lateinit var prefs: Prefs
     lateinit var repo: Repo
     lateinit var web: WebServer
+    val trVpn: TrVpn by lazy { TrVpn(this) }
     val main = Handler(Looper.getMainLooper())
 
     /** Installed apps worth launching from ZapTV's Apps tab. */
