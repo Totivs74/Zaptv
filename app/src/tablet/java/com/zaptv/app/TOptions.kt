@@ -12,6 +12,7 @@ class TOptions(private val act: TabletActivity) : ScrollView(act) {
     private val subsVal = act.label("", 14f, Col.MUTED)
     private val picVal = act.label("", 14f, Col.MUTED)
     private val favVal = act.label("", 14f, Col.MUTED)
+    private val trVal = act.label("", 14f, Col.MUTED)
 
     init {
         isVerticalScrollBarEnabled = false
@@ -27,6 +28,8 @@ class TOptions(private val act: TabletActivity) : ScrollView(act) {
         row("Subtitles", subsVal) { chooseSubs() }
         row("Picture", picVal) { choosePicture() }
         row("Favourite", favVal) { act.toggleFavourite(); refresh() }
+        row("Turkey connection", trVal) { act.toggleTrForCurrent(); postDelayed({ refresh() }, 350) }
+        row("Turkey file", null) { act.openTurkeyFile() }
         row("Reload channel", null) { act.reloadChannel() }
         row("Settings", null) { act.openSettings() }
         addView(box)
@@ -56,6 +59,12 @@ class TOptions(private val act: TabletActivity) : ScrollView(act) {
         val sel = s.firstOrNull { it.selected }
         subsVal.text = when { s.isEmpty() -> "None available"; sel == null -> "Off"; else -> sel.label }
         picVal.text = PICTURE[app.prefs.resizeMode.coerceIn(0, 2)]
+        val vpn = TrVpn.get(act)
+        trVal.text = when {
+            !vpn.configured -> "No file yet"
+            act.currentChannel()?.let { vpn.isTr(it.key) } == true -> "On"
+            else -> "Off"
+        }
         favVal.text = act.currentChannel()?.let { if (app.repo.isFav(it)) "Yes ★" else "No" } ?: "-"
     }
 

@@ -163,6 +163,7 @@ class TChannelList(private val act: TabletActivity) : LinearLayout(act) {
         val now = act.label("", 13f, Col.MUTED)
         val bar = act.progressBar(0f)
         val star = act.label("", 22f, Col.MUTED)
+        val trTag = act.label("TR", 11f, Col.DARK, true)
         var ch: Channel? = null
 
         init {
@@ -187,6 +188,9 @@ class TChannelList(private val act: TabletActivity) : LinearLayout(act) {
             texts.addView(now, lp(MATCH, WRAP).apply { topMargin = dp(4) })
             texts.addView(bar, lp(MATCH, dp(3)).apply { topMargin = dp(6) })
             root.addView(texts, lp(0, WRAP, 1f))
+            trTag.setPadding(dp(7), dp(3), dp(7), dp(3))
+            trTag.background = rounded(Col.CORAL, dp(6).toFloat())
+            root.addView(trTag, lp(WRAP, WRAP).apply { leftMargin = dp(8) })
             star.gravity = Gravity.CENTER
             star.setPadding(dp(14), dp(8), dp(14), dp(8))
             root.addView(star, lp(WRAP, WRAP))
@@ -219,6 +223,7 @@ class TChannelList(private val act: TabletActivity) : LinearLayout(act) {
                 star.text = if (fav) "★" else "☆"
                 star.setTextColor(if (fav) 0xFFFFC53D.toInt() else Col.SUBTLE)
             }
+            trTag.visibility = if (!c.isWeather && TrVpn.get(act).needs(c.key)) View.VISIBLE else View.GONE
             root.isActivated = c.key == playingKey
         }
     }

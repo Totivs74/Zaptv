@@ -49,7 +49,7 @@ class TBanner(act: Activity) : FrameLayout(act) {
     }
 
     fun show(ch: Channel, sticky: Boolean = false) {
-        title.text = "${ch.number}  ${ch.name}"
+        title.text = "${ch.number}  ${ch.name}" + if (TrVpn.get(context).needs(ch.key)) "   · TR" else ""
         initials.text = ch.initials
         Logos.load(ch.logo, logo, initials)
         val t = System.currentTimeMillis()

@@ -26,6 +26,8 @@ class TabletActivity : Activity(), PlayerController.Listener {
     val app: App get() = application as App
     private val repo get() = app.repo
     private val prefs get() = app.prefs
+    private val tr get() = TrVpn.get(this)
+    companion object { const val REQ_VPN = 9 }
 
     lateinit var player: PlayerController
     private lateinit var body: LinearLayout
@@ -215,13 +217,15 @@ class TabletActivity : Activity(), PlayerController.Listener {
             } else if (!repo.hasPlaylists()) showSetup(null)
             if (repo.missingCache()) backgroundRefresh()
         }
-        if (started && !player.isActive) player.resume()
+        if (started && !player.isActive) routeFor(current) { player.resume() }
     }
 
     override fun onStop() {
         // Free the decoder and network while another app (or Settings) is in front.
         visible = false
         player.release()
+        // Close the Turkey connection while ZapTV is not on screen; it reopens on the next TR channel.
+        if (tr.isUp || tr.desired) tr.ensure(false) { _, _ -> }
         super.onStop()
     }
 
@@ -298,7 +302,7 @@ class TabletActivity : Activity(), PlayerController.Listener {
 
     private fun startup() {
         // Fastest path: start the last stream immediately, before the playlist is even read.
-        if (prefs.openWithLast && prefs.lastUrl.isNotEmpty() && prefs.sourceType != "stalker") {
+        if (prefs.openWithLast && prefs.lastUrl.isNotEmpty() && prefs.sourceType != "stalker" && !tr.needs(prefs.lastChannelKey)) {
             player.play(prefs.lastUrl)
             started = true
         }
@@ -375,6 +379,15 @@ class TabletActivity : Activity(), PlayerController.Listener {
         prefs.lastChannelKey = ch.key
         prefs.addRecent(ch.key)
         started = true
+        routeFor(ch) { startStream(ch) }
+        if (showBanner && prefs.bannerSec > 0) banner.show(ch, sticky = controls.visibility == View.VISIBLE)
+        list.markPlaying(ch, scroll = !landscape || !channelsSheet.isOpen)
+        if (list.group == Repo.RECENT) list.refreshItems()
+        updateFavButton()
+        updatePreload(ch)
+    }
+
+    private fun startStream(ch: Channel) {
         if (ch.cmd.isNotEmpty()) {
             prefs.lastUrl = ""
             status("Connecting…", sticky = true)
@@ -390,18 +403,71 @@ class TabletActivity : Activity(), PlayerController.Listener {
             prefs.lastUrl = ch.url
             player.play(ch.url)
         }
-        if (showBanner && prefs.bannerSec > 0) banner.show(ch, sticky = controls.visibility == View.VISIBLE)
-        list.markPlaying(ch, scroll = !landscape || !channelsSheet.isOpen)
-        if (list.group == Repo.RECENT) list.refreshItems()
-        updateFavButton()
-        updatePreload(ch)
+    }
+
+    // ---------------------------------------------------------------- Turkey connection
+
+    private var pendingTr: Channel? = null
+
+    /**
+     * Opens the Turkey connection for TR channels and closes it for all others, then runs [then].
+     * Channels without TR never wait: when the connection is already closed nothing happens.
+     */
+    private fun routeFor(ch: Channel?, then: () -> Unit) {
+        val want = ch != null && tr.needs(ch.key)
+        if (!want && !tr.isUp && !tr.desired) { then(); return }
+        if (want && tr.isUp && tr.desired) { then(); return }
+        if (want) {
+            val ask = tr.permissionIntent()
+            if (ask != null) {
+                pendingTr = ch
+                status("Allow the Turkey connection on the next screen", sticky = true)
+                runCatching { startActivityForResult(ask, REQ_VPN) }.onFailure { status("This tablet can't open the VPN permission screen") }
+                return
+            }
+            status("Connecting via Turkey…", sticky = true)
+        }
+        player.stop()
+        tr.ensure(want) { ok, err ->
+            app.main.post {
+                if (current !== ch) return@post
+                if (want && !ok) status("Turkey connection failed${err?.let { ": $it" } ?: ""}") else clearStatus()
+                then()
+            }
+        }
+    }
+
+    /** Options > Turkey connection: marks or unmarks the current channel and replays it. */
+    fun toggleTrForCurrent() {
+        val ch = current ?: return
+        if (!tr.configured) { openTurkeyFile(); return }
+        tr.toggle(ch.key)
+        status(if (tr.isTr(ch.key)) "${ch.name}: Turkey connection on" else "${ch.name}: Turkey connection off")
+        list.refreshItems()
+        playChannel(ch, showBanner = false)
+    }
+
+    fun openTurkeyFile() {
+        closeSheets()
+        startActivity(Intent(this, TurkeyFileActivity::class.java))
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQ_VPN) {
+            val ch = pendingTr
+            pendingTr = null
+            if (resultCode == RESULT_OK && ch != null && current === ch) playChannel(ch, showBanner = false)
+            else if (resultCode != RESULT_OK) status("Turkey connection was not allowed")
+        }
     }
 
     /** Preloads neighbours (Settings > Player > Channels to preload); leans toward the zapping direction. */
     private fun updatePreload(ch: Channel) {
         val l = zapList()
         val i = l.indexOfFirst { it.key == ch.key }
-        if (i < 0 || l.size < 2) { player.setNeighbours(emptyList(), 0); return }
+        if (i < 0 || l.size < 2 || tr.needs(ch.key)) { player.setNeighbours(emptyList(), 0); return }
         val out = ArrayList<Pair<String, Int>>()
         val z = zapDir
         val offsets = when (prefs.preloadCount) {
@@ -412,7 +478,7 @@ class TabletActivity : Activity(), PlayerController.Listener {
         }
         for (d in offsets) {
             val n = l[((i + d) % l.size + l.size) % l.size]
-            if (n.key != ch.key && n.cmd.isEmpty() && n.url.isNotEmpty() && !n.isWeather && out.none { it.first == n.url }) out.add(n.url to i + d)
+            if (n.key != ch.key && n.cmd.isEmpty() && n.url.isNotEmpty() && !n.isWeather && !tr.needs(n.key) && out.none { it.first == n.url }) out.add(n.url to i + d)
         }
         player.setNeighbours(out, i)
     }

@@ -28,8 +28,9 @@ android {
         create("tablet") {
             dimension = "device"
             applicationIdSuffix = ".tablet"
-            versionCode = 1
-            versionName = "1.0-test"
+            minSdk = 24   // WireGuard library (Turkey connection) needs Android 7+
+            versionCode = 2
+            versionName = "1.1-test"
         }
     }
 
@@ -55,6 +56,8 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+        // Needed by the WireGuard library in the tablet build; no behaviour change for TV.
+        isCoreLibraryDesugaringEnabled = true
     }
 
     lint {
@@ -76,4 +79,7 @@ dependencies {
     // FFmpeg audio fallback (AC-3, E-AC-3, DTS, MP2...). Loaded automatically by Media3.
     implementation("org.jellyfin.media3:media3-ffmpeg-decoder:$media3+1")
     implementation("com.google.zxing:core:3.5.3")
+    // Turkey connection (tablet build only): official WireGuard tunnel library (Apache 2.0)
+    "tabletImplementation"("com.wireguard.android:tunnel:1.0.20260102")
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.3")
 }

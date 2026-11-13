@@ -160,6 +160,12 @@ class SettingsActivity : Activity() {
                 "Fewer = the channel you pick starts faster. Ahead = the direction you're zapping") {
                 prefs.preloadCount = (prefs.preloadCount + 1) % 4
             },
+        ) + (if (Device.TABLET) listOf(
+            Row("Turkey file", { if (File(filesDir, "turkey.conf").let { it.isFile && it.length() > 0 }) "Loaded" else "Not loaded" },
+                "Unlocator WireGuard file (.conf). Then turn Turkey connection on per channel in Options") {
+                runCatching { startActivity(Intent().setClassName(packageName, "com.zaptv.app.TurkeyFileActivity")) }
+            }
+        ) else emptyList()) + listOf(
             Row("Auto-reconnect if stream drops", { onOff(prefs.autoReconnect) }, toggle = true) { prefs.autoReconnect = !prefs.autoReconnect },
             Row("Audio decoder", { if (prefs.ffmpegFirst) "FFmpeg first" else "Hardware first" }, "Use FFmpeg first if some channels play without sound") {
                 prefs.ffmpegFirst = !prefs.ffmpegFirst
