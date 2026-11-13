@@ -7,6 +7,10 @@ on:
 permissions:
   contents: write
 
+# Test branch "tablet": one project, two builds.
+# Builds the TV build (to prove it still compiles; not published) and the new tablet build.
+# Publishes ONLY the tablet APK, as a pre-release and on its own "dist-tablet" branch.
+# It never touches the "dist" branch or the "latest" release that the ZapTV Updater uses.
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -22,53 +26,42 @@ jobs:
         with:
           gradle-version: "8.13"
 
-      - name: Build
-        run: gradle assembleRelease --no-daemon --stacktrace
+      - name: Build TV and tablet
+        run: gradle :app:assembleTvRelease :app:assembleTabletRelease --no-daemon --stacktrace
 
-      - name: Rename APK
+      - name: Rename APKs
         run: |
-          cp app/build/outputs/apk/release/app-release.apk ZapTV.apk
-          cp ZapTV.apk tv.apk
-          cp updater/build/outputs/apk/release/updater-release.apk updater.apk
-          cp ask/build/outputs/apk/release/ask-release.apk ask.apk
-          CODE=$(grep -oP 'versionCode = \K[0-9]+' app/build.gradle.kts)
-          NAME=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts)
-          echo "{\"versionCode\": $CODE, \"versionName\": \"$NAME\"}" > version.json
-          cat version.json
+          cp app/build/outputs/apk/tablet/release/app-tablet-release.apk ZapTV-Tablet.apk
+          cp app/build/outputs/apk/tv/release/app-tv-release.apk ZapTV-TV-check.apk
+          ls -la *.apk
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ZapTV-apk
+          name: ZapTV-tablet-and-tv-check
           path: |
-            ZapTV.apk
-            updater.apk
+            ZapTV-Tablet.apk
+            ZapTV-TV-check.apk
 
-      - name: Publish to dist branch (raw-reachable host)
+      - name: Publish tablet APK to dist-tablet branch (fixed download link)
         run: |
-          mkdir -p dist
-          cp ZapTV.apk dist/ZapTV.apk
-          cp tv.apk dist/tv.apk
-          cp updater.apk dist/updater.apk
-          cp ask.apk dist/ask.apk
-          cp version.json dist/version.json
-          cd dist
+          mkdir -p dist-tablet
+          cp ZapTV-Tablet.apk dist-tablet/ZapTV-Tablet.apk
+          cd dist-tablet
           git init -q
-          git checkout -q -b dist
+          git checkout -q -b dist-tablet
           git config user.email "zaptv@users.noreply.github.com"
           git config user.name "ZapTV build"
           git add -A
-          git commit -qm "dist build ${{ github.run_number }}"
-          git push -f -q "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" dist
+          git commit -qm "tablet build ${{ github.run_number }}"
+          git push -f -q "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" dist-tablet
 
-      - name: Publish release
+      - name: Publish tablet test pre-release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: build-${{ github.run_number }}
-          name: ZapTV build ${{ github.run_number }}
-          files: |
-            ZapTV.apk
-            tv.apk
-            updater.apk
-            ask.apk
-            version.json
-          make_latest: true
+          tag_name: tablet-test-${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
+          name: ZapTV Tablet test ${{ github.run_number }}
+          body: Touch version of ZapTV for Android tablets (test). Installs as its own app; the TV app is not affected.
+          files: ZapTV-Tablet.apk
+          prerelease: true
+          make_latest: false

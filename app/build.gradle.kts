@@ -18,6 +18,21 @@ android {
         }
     }
 
+    // One project, two builds: "tv" is today's ZapTV (unchanged), "tablet" is the touch version.
+    // Shared code lives in src/main; each build adds its own screens in src/tv or src/tablet.
+    flavorDimensions += "device"
+    productFlavors {
+        create("tv") {
+            dimension = "device"
+        }
+        create("tablet") {
+            dimension = "device"
+            applicationIdSuffix = ".tablet"
+            versionCode = 1
+            versionName = "1.0-test"
+        }
+    }
+
     signingConfigs {
         create("zap") {
             storeFile = file("zaptv.keystore")

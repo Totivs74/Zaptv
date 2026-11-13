@@ -52,6 +52,9 @@ class SettingsActivity : Activity() {
         "ZapTV, a fast IPTV player designed by Bulent Cansever."
     )
 
+    /** Sections shown in this build. The tablet build leaves out the remote-key and voice sections. */
+    private val shown: List<Int> = if (Device.TABLET) listOf(0, 1, 2, 5, 6, 7, 8) else sections.indices.toList()
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val root = hbox()
@@ -61,14 +64,19 @@ class SettingsActivity : Activity() {
 
         menu = vbox()
         menu.addView(label("Settings", 24f, Col.TEXT, true), lp(WRAP, WRAP).apply { bottomMargin = dp(14) })
-        sections.forEachIndexed { i, name ->
-            val b = label("${i + 1}   $name", 16f, Col.TEXT, true)
+        shown.forEachIndexed { pos, i ->
+            val name = sections[i]
+            val b = label("${pos + 1}   $name", 16f, Col.TEXT, true)
             b.setPadding(dp(16), dp(11), dp(16), dp(11))
             b.background = focusBg(this, 0, 10)
             b.setTextColor(focusText(0xFFC9CED6.toInt()))
             b.isFocusable = true
             b.setOnFocusChangeListener { _, has -> if (has && section != i) { section = i; render() } }
-            b.setOnClickListener { content.getChildAt(0)?.requestFocus() }
+            b.setOnClickListener {
+                // Touch: a tap opens the section (on TV the focus already did that).
+                if (Device.TABLET && section != i) { section = i; render() }
+                else content.getChildAt(0)?.requestFocus()
+            }
             menu.addView(b, lp(MATCH, WRAP).apply { bottomMargin = dp(4) })
         }
         root.addView(menu, lp(dp(250), MATCH))
@@ -104,19 +112,24 @@ class SettingsActivity : Activity() {
                 repo.playlists.setOn(pl.id, !now.on)
                 app.gridDirty = true
             }
-        } + listOf(
+        } + (if (Device.TABLET) listOf(
+            Row("Add a playlist on this tablet", { "Open" }, "Opens the ZapTV page in the browser: upload a file or paste a link") { openLocalPage() }
+        ) else emptyList()) + listOf(
             Row("Add a playlist", { "From laptop or phone" }, "Upload a file, paste a link, Xtream or MAC portal") { showPhoneDialog() },
             Row("Delete a playlist", { "Choose" }) { deletePlaylistDialog() },
             Row("Refresh playlists and guide now", { if (repo.busy) "Working…" else "Refresh" }, "Also happens by itself once a day") { refreshNow() }
         )
         1 -> listOf(
             Row("Hide groups", { "${prefs.hiddenGroups.size} hidden" }, "Hidden groups don't appear in the grid or when zapping") { hideGroupsDialog() },
-            Row("Favourites", { "${prefs.favourites.size} channels" }, "Add while watching: press ▶, then Favourite. OK here clears them all.") { clearFavourites() },
+            Row("Favourites", { "${prefs.favourites.size} channels" },
+                if (Device.TABLET) "Add with the ☆ next to a channel. Tap here to clear them all." else "Add while watching: press ▶, then Favourite. OK here clears them all.") { clearFavourites() },
             Row("Recently watched", { "${prefs.recent.size} channels" }, "Shown as the first tab in the channel list. OK here clears it.") {
                 prefs.recent = emptyList(); app.gridDirty = true
             }
         )
-        2 -> listOf(
+        2 -> if (Device.TABLET) listOf(
+            Row("Open with", { if (prefs.openWithLast) "Last channel" else "Channel list" }) { prefs.openWithLast = !prefs.openWithLast }
+        ) else listOf(
             Row("Auto-start when TV turns on", { onOff(prefs.autoBoot) }, "Needs the \"Display over other apps\" permission below", toggle = true) {
                 prefs.autoBoot = !prefs.autoBoot; askOverlayIfNeeded()
             },
@@ -161,7 +174,9 @@ class SettingsActivity : Activity() {
                 prefs.bannerSec = order[(order.indexOf(prefs.bannerSec) + 1).mod(order.size)]
             }
         )
-        6 -> listOf(
+        6 -> if (Device.TABLET) listOf(
+            Row("Show clock", { onOff(prefs.showClock) }, "Top right, while watching", toggle = true) { prefs.showClock = !prefs.showClock }
+        ) else listOf(
             Row("Show clock", { onOff(prefs.showClock) }, "Top right, in the channel list and while watching", toggle = true) { prefs.showClock = !prefs.showClock },
             Row("Grid size", { if (prefs.gridCols >= 6) "6 × 3" else "5 × 3" }, "5 × 3 shows bigger logos") {
                 prefs.gridCols = if (prefs.gridCols >= 6) 5 else 6
@@ -169,7 +184,9 @@ class SettingsActivity : Activity() {
         )
         7 -> repo.weather.cities().map { c ->
             Row(c.name, { repo.weather.get(c)?.let { "${it.temp}°" } ?: "" }, c.country + ". OK removes it.") { removeCityDialog(c.name) }
-        } + listOf(
+        } + (if (Device.TABLET) listOf(
+            Row("Add a city on this tablet", { "Open" }, "Type the city name on the ZapTV page") { openLocalPage() }
+        ) else emptyList()) + listOf(
             Row("Add a city", { "From laptop or phone" }, "Type the city name on the ZapTV page") { showPhoneDialog() }
         )
         else -> listOf(
@@ -207,10 +224,17 @@ class SettingsActivity : Activity() {
             .show()
     }
 
+    /** Opens the built-in ZapTV page in this device's browser (tablet build). */
+    private fun openLocalPage() {
+        val port = if (app.web.port == 0) 8080 else app.web.port
+        val ok = runCatching { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("http://127.0.0.1:$port"))) }.isSuccess
+        if (!ok) toast("No browser found on this device")
+    }
+
     private fun render() {
         title.text = sections[section]
-        subtitle.text = subs[section]
-        for (i in 1 until menu.childCount) menu.getChildAt(i).isActivated = i - 1 == section
+        subtitle.text = if (Device.TABLET && section == 2) "What you see when ZapTV opens." else subs[section]
+        for (i in 1 until menu.childCount) menu.getChildAt(i).isActivated = shown.getOrNull(i - 1) == section
         content.removeAllViews()
         for (r in rows(section)) content.addView(rowView(r), lp(MATCH, WRAP).apply { bottomMargin = dp(8) })
     }
