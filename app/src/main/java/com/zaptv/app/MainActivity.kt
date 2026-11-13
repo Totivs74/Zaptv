@@ -82,7 +82,8 @@ class MainActivity : Activity(), PlayerController.Listener {
             gravity = Gravity.CENTER
             setShadowLayer(6f, 0f, 2f, 0xFF000000.toInt())
         }
-        root.addView(subs, FrameLayout.LayoutParams(MATCH, WRAP, Gravity.BOTTOM).apply { setMargins(dp(80), 0, dp(80), dp(40)) })
+        // Subtitles at the top, clear of channel logos/tickers that usually sit along the bottom.
+        root.addView(subs, FrameLayout.LayoutParams(MATCH, WRAP, Gravity.TOP).apply { setMargins(dp(80), dp(40), dp(80), 0) })
 
         player = PlayerController(this, frame, subs, prefs)
         player.listener = this
